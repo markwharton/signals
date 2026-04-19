@@ -1,4 +1,12 @@
 {
+  "routes": [
+    {
+      "route": "/beacon.js",
+      "headers": {
+        "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"
+      }
+    }
+  ],
   "navigationFallback": {
     "rewrite": "/index.html",
     "exclude": ["/*.{css,js,ico,png,svg,jpg,webp}"]
