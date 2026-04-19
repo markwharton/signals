@@ -51,6 +51,14 @@ param corsAllowedOrigins array = [
   'https://www.${siteId}'
 ]
 
+@description('Monthly cost ceiling (currency follows the billing account) for the resource group. Set ~5-10x normal burn to catch runaway spend without firing on noise.')
+param monthlyBudgetAmount int = 25
+
+@description('Emails that receive budget notifications at 50% actual, 100% actual, and 100% forecasted.')
+param budgetContactEmails array = [
+  'mark@jynx.com'
+]
+
 // --- Derived names -----------------------------------------------------------
 
 var uniqueSuffix = uniqueString(resourceGroup().id)
@@ -131,6 +139,15 @@ module logicapp 'modules/logicapp.bicep' = {
     functionAppDefaultHostname: functionapp.outputs.defaultHostname
     dailyRawKey: dailyRawKey
     tags: commonTags
+  }
+}
+
+module budget 'modules/budget.bicep' = {
+  name: 'budget-deploy'
+  params: {
+    budgetName: 'budget-${appName}-${environment}'
+    amount: monthlyBudgetAmount
+    contactEmails: budgetContactEmails
   }
 }
 
