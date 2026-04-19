@@ -45,6 +45,12 @@ param dailyApiKeys string
 @secure()
 param mcpApiKeys string = ''
 
+@description('Explicit list of origins allowed to POST to /api/collect. Leave default for production; widen in dev/staging via parameters file.')
+param corsAllowedOrigins array = [
+  'https://${siteId}'
+  'https://www.${siteId}'
+]
+
 // --- Derived names -----------------------------------------------------------
 
 var uniqueSuffix = uniqueString(resourceGroup().id)
@@ -103,6 +109,7 @@ module functionapp 'modules/functionapp.bicep' = {
     signalsMode: signalsMode
     siteId: siteId
     timezone: timezone
+    corsAllowedOrigins: corsAllowedOrigins
     tags: commonTags
   }
 }

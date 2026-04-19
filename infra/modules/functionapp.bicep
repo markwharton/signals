@@ -14,6 +14,9 @@ param siteId string
 param timezone string
 param tags object = {}
 
+@description('Explicit origins allowed to POST to /api/collect. `*` works but widens attack surface — name the real site origins here.')
+param corsAllowedOrigins array
+
 @description('Upper bound on concurrent instances for the Flex Consumption plan.')
 param maximumInstanceCount int = 40
 
@@ -76,7 +79,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
       minTlsVersion: '1.2'
       ftpsState: 'FtpsOnly'
       cors: {
-        allowedOrigins: ['*']
+        allowedOrigins: corsAllowedOrigins
         supportCredentials: false
       }
       appSettings: concat([
