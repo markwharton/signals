@@ -12,7 +12,7 @@ export interface BaseStoredEvent {
   ts: string;
 }
 
-/** A pageview — the only event kind in phase 2. */
+/** A pageview — a successfully served page. */
 export interface PageviewEvent extends BaseStoredEvent {
   kind: "pageview";
   path: string;
@@ -20,13 +20,27 @@ export interface PageviewEvent extends BaseStoredEvent {
   isMobile: boolean;
 }
 
+/**
+ * A soft-404 view. GitHub Pages (and similar static hosts) serve the 404
+ * document with the URL bar still showing the attempted path, so `path`
+ * here is the attempted path — not the 404 page's own URL. Emitted when
+ * the embedded beacon tag has `data-kind="404"`, which in practice lives
+ * only on the site's 404.html.
+ */
+export interface NotFoundEvent extends BaseStoredEvent {
+  kind: "404";
+  path: string;
+  referrerHost: string | null;
+  isMobile: boolean;
+}
+
 /** Union of all stored event kinds. Extend as new kinds land. */
-export type Event = PageviewEvent;
+export type Event = PageviewEvent | NotFoundEvent;
 
 /** Wire format — what the beacon POSTs to /api/collect. */
 export interface CollectRequest {
   v: 1;
-  kind: "pageview";
+  kind: "pageview" | "404";
   site: string;
   path: string;
   referrerHost: string | null;
