@@ -1,8 +1,16 @@
 {
+  "changelog": {
+    "hooks": {
+      "preCommit": "pnpm -r exec npm version ${VERSION#v} --no-git-tag-version && git add 'packages/**/package.json' pnpm-lock.yaml"
+    }
+  },
   "guard": {
     "branches": ["main"]
   },
   "release": {
-    "branch": "main"
+    "branch": "main",
+    "hooks": {
+      "preRelease": "pnpm install --frozen-lockfile && pnpm -r lint --if-present && pnpm -r test --if-present && pnpm -r build --if-present && go test -race ./..."
+    }
   }
 }

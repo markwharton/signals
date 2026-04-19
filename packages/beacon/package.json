@@ -1,0 +1,13 @@
+{
+  "name": "@signals/beacon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && mkdir -p ../dashboard/public && cp dist/beacon.js ../dashboard/public/beacon.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@signals/shared": "workspace:*"
+  }
+}

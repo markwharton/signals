@@ -1,8 +1,22 @@
 # Build output
 dist/
+out/
+.vite/
+*.tsbuildinfo
+
+# Beacon build artifact copied into dashboard for deployment
+packages/dashboard/public/beacon.js
+
+# Node
+node_modules/
 
 # Coverage
 coverage.out
+
+# Environment
+.env
+.env.*
+!scripts/.env.example
 
 # Editor and OS
 *.bak
