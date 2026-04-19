@@ -79,6 +79,12 @@ function computeReferrerHost(
   referrer: string,
   currentHostname: string,
 ): string | null {
+  // Same-origin → null is intentional: a site-to-site click would otherwise
+  // inflate the site's own referrer counts with itself, which is accurate but
+  // not actionable for OSS marketing attribution. This, plus empty referrer,
+  // both map to null; rollups may want to distinguish typed-URL from
+  // referrer-stripped traffic later, which would require a new wire-format
+  // field rather than a data-only change.
   if (!referrer) return null;
   let url: URL;
   try {
