@@ -85,7 +85,7 @@ function isCollectRequest(x: unknown): x is CollectRequest {
   if (typeof x !== "object" || x === null) return false;
   const r = x as Record<string, unknown>;
   if (r.v !== 1) return false;
-  if (r.kind !== "pageview") return false;
+  if (r.kind !== "pageview" && r.kind !== "404") return false;
   if (typeof r.site !== "string" || r.site.length === 0) return false;
   if (typeof r.path !== "string" || r.path.length === 0) return false;
   if (r.referrerHost !== null && typeof r.referrerHost !== "string") {
