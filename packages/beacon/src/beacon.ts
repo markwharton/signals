@@ -1,4 +1,4 @@
-// Counter-mode pageview beacon for signals.
+// Counter-mode beacon for signals.
 //
 // Runs as a classic browser script embedded via:
 //   <script
@@ -13,6 +13,12 @@
 // same-origin setups (local SWA CLI emulator, or a future reverse-proxy
 // deployment) still work without the explicit attribute.
 //
+// data-kind defaults to "pageview". Set `data-kind="404"` on the site's
+// 404.html (only) so soft-404 views — GitHub Pages and similar static
+// hosts leave the attempted path in the URL bar — are distinguishable
+// from real pageviews in rollups. Unknown values warn and fall back to
+// pageview; a fire-and-forget beacon should fail soft.
+//
 // Privacy envelope: no cookies, no IPs, no fingerprints, no sessions,
 // no raw user-agent, no referrer query strings. The payload includes
 // only the fields the privacy policy enumerates.
@@ -23,7 +29,7 @@
 
 interface CollectPayload {
   v: 1;
-  kind: "pageview";
+  kind: "pageview" | "404";
   site: string;
   path: string;
   referrerHost: string | null;
@@ -40,12 +46,14 @@ interface CollectPayload {
   const mode = scriptEl.getAttribute("data-mode") ?? "counter";
   if (mode !== "counter") return;
 
+  const kind = resolveKind(scriptEl);
+
   const endpoint = resolveEndpoint(scriptEl);
   if (!endpoint) return;
 
   const payload: CollectPayload = {
     v: 1,
-    kind: "pageview",
+    kind,
     site,
     path: location.pathname,
     referrerHost: computeReferrerHost(document.referrer, location.hostname),
@@ -64,6 +72,15 @@ interface CollectPayload {
     );
   }
 })();
+
+function resolveKind(scriptEl: HTMLScriptElement): "pageview" | "404" {
+  const attr = scriptEl.getAttribute("data-kind") ?? "pageview";
+  if (attr === "pageview" || attr === "404") return attr;
+  console.warn(
+    `signals beacon: unknown data-kind "${attr}", defaulting to pageview`,
+  );
+  return "pageview";
+}
 
 function resolveEndpoint(scriptEl: HTMLScriptElement): string | null {
   const explicit = scriptEl.getAttribute("data-endpoint");
