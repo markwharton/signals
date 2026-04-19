@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.2.0] - 2026-04-20
+
+### Added
+
+- add NotFoundEvent to discriminated union (54ebdb3)
+- accept 404 kind in collect validator (d53c8d1)
+- support data-kind attribute (pageview | 404) (9ad4326)
+- cache beacon.js for 1 day with stale-while-revalidate (2aedb07)
+
 ## [v0.1.0] - 2026-04-19
 
 ### Added
@@ -36,3 +45,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - scaffold signals monorepo (3f1a4ad)
 
 [v0.1.0]: https://github.com/markwharton/signals/compare/v0.0.0...v0.1.0
+[v0.2.0]: https://github.com/markwharton/signals/compare/v0.1.0...v0.2.0
