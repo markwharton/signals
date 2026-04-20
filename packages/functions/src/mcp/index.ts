@@ -85,16 +85,17 @@ app.http("mcp", {
             "distinguish human from automated traffic.",
           inputSchema: {
             days: z
-              .union([z.literal(7), z.literal(30), z.literal("all")])
+              .union([z.number().int().min(1).max(365), z.literal("all")])
               .optional()
               .describe(
-                "Length of the window in UTC days (7 or 30), or 'all' for up to a year. Defaults to 7.",
+                "Length of the window in UTC days (integer 1-365), or " +
+                  "'all' for the maximum server-capped window (365 days). " +
+                  "Defaults to 7.",
               ),
           },
         },
-        async ({ days }: { days?: 7 | 30 | "all" }) => {
-          const resolved =
-            days === "all" ? ALL_DAYS : (days ?? 7);
+        async ({ days }: { days?: number | "all" }) => {
+          const resolved = days === "all" ? ALL_DAYS : (days ?? 7);
           const summary = await buildSummary(site, resolved);
           return {
             content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
