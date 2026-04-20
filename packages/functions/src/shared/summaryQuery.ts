@@ -155,11 +155,20 @@ export async function buildSummary(
   };
 }
 
-/** Parse the `days` query string value to a concrete day count. */
+/**
+ * Parse the `days` query string value. Accepts "all" (caps at
+ * ALL_DAYS) and any positive integer in [1, ALL_DAYS]; defaults to 7
+ * when absent. Returns either the resolved day count or an
+ * error-shaped object for the handler to forward as 400.
+ */
 export function parseDays(raw: string | null): number | { error: string } {
   const value = raw ?? "7";
-  if (value === "7") return 7;
-  if (value === "30") return 30;
   if (value === "all") return ALL_DAYS;
-  return { error: "days must be 7, 30, or all" };
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > ALL_DAYS) {
+    return {
+      error: `days must be an integer between 1 and ${ALL_DAYS}, or "all"`,
+    };
+  }
+  return n;
 }
