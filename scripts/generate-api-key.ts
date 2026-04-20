@@ -8,6 +8,7 @@
  *
  * Usage:
  *   pnpm run generate:api-key                           # show usage
+ *   pnpm run generate:api-key daily logic-app           # mint a daily key
  *   pnpm run generate:api-key mcp claude-desktop        # mint an mcp key
  *
  * A leading `--` separator is tolerated for muscle memory from older pnpm/npm.
@@ -21,6 +22,10 @@ interface ScopeConfig {
 }
 
 const SCOPES: Record<string, ScopeConfig> = {
+  daily: {
+    envVar: "DAILY_API_KEYS",
+    endpoint: "POST /api/daily",
+  },
   mcp: {
     envVar: "MCP_API_KEYS",
     endpoint: "POST /api/mcp",
@@ -37,7 +42,7 @@ function usage(code: number): never {
   }
   console.log("");
   console.log("Example:");
-  console.log("  pnpm run generate:api-key mcp claude-desktop");
+  console.log("  pnpm run generate:api-key daily logic-app");
   console.log("");
   process.exit(code);
 }

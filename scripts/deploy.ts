@@ -1,25 +1,20 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Deploy signals dashboard (static) and Functions API to Azure.
- *
- * The SWA (Free) serves only static assets — dashboard + beacon.js. The
- * API runs on a separate Flex Consumption Function App, deployed via
- * `az functionapp deployment source config-zip` against a bundled zip.
+ * Deploy signals dashboard and Managed Functions API to Azure Static
+ * Web Apps.
  *
  * Flow:
- *   1. Build shared, beacon (copies to dashboard/public/), dashboard, functions.
- *   2. Bundle functions with `pnpm deploy --prod --legacy` into out/api.
- *      --legacy preserves the original package.json (main, type) that the
- *      newer pnpm 10 deploy strips. The resulting bundle is self-contained
- *      via pnpm's virtual store.
- *   3. Zip out/api → out/api.zip.
- *   4. Push zip to the Function App via `az functionapp deployment source
- *      config-zip`.
- *   5. Push static assets to the SWA via `swa deploy ./packages/dashboard/dist`.
+ *   1. Build shared, beacon (copies to dashboard/public/), dashboard,
+ *      functions.
+ *   2. Bundle functions with `pnpm deploy --prod --legacy` into out/api
+ *      (preserves the original package.json — main, type — that the
+ *      newer pnpm 10 deploy strips).
+ *   3. Single `swa deploy` uploads the dashboard dist plus the bundled
+ *      functions as Managed Functions (one command, same origin).
  *
  * Usage:
- *   pnpm run deploy                  # auto-detect SWA + Function App in rg-signals-prod
+ *   pnpm run deploy                  # auto-detect SWA in rg-signals-prod
  *   ENVIRONMENT=dev pnpm run deploy  # use rg-signals-dev
  */
 
@@ -36,39 +31,28 @@ const run = (cmd: string): void => {
 const capture = (cmd: string): string =>
   execSync(cmd, { encoding: "utf8" }).trim();
 
-function detectSingle(
-  command: string,
-  description: string,
-  hint: string,
-): string {
-  const output = capture(command);
+function detectSwa(): string {
+  const output = capture(
+    `az staticwebapp list --resource-group "${RESOURCE_GROUP}" ` +
+      `--query "[?starts_with(name, 'stapp-signals-')].name" -o tsv`,
+  );
   const list = output.split("\n").filter(Boolean);
   if (list.length === 0) {
-    console.error(`No ${description} in ${RESOURCE_GROUP}`);
-    console.error(hint);
+    console.error(
+      `No Static Web App matching 'stapp-signals-*' in ${RESOURCE_GROUP}`,
+    );
+    console.error("Deploy infra first: pnpm run deploy:infra");
     process.exit(1);
   }
   if (list.length > 1) {
-    console.error(`Multiple ${description}s — specify one:`);
+    console.error("Multiple Static Web Apps — specify one:");
     list.forEach((n) => console.error(`  - ${n}`));
     process.exit(1);
   }
   return list[0];
 }
 
-const swaApp = detectSingle(
-  `az staticwebapp list --resource-group "${RESOURCE_GROUP}" ` +
-    `--query "[?starts_with(name, 'stapp-signals-')].name" -o tsv`,
-  "Static Web App matching 'stapp-signals-*'",
-  "Deploy infra first: pnpm run deploy:infra",
-);
-
-const funcApp = detectSingle(
-  `az functionapp list --resource-group "${RESOURCE_GROUP}" ` +
-    `--query "[?starts_with(name, 'func-signals-')].name" -o tsv`,
-  "Function App matching 'func-signals-*'",
-  "Deploy infra first: pnpm run deploy:infra",
-);
+const swaApp = process.argv[2] ?? detectSwa();
 
 // --- Build ------------------------------------------------------------------
 
@@ -87,31 +71,24 @@ run("pnpm --filter=@signals/dashboard run build");
 console.log("Building functions...");
 run("pnpm --filter=@signals/functions run build");
 
-// --- Bundle + zip functions -------------------------------------------------
+// --- Bundle functions for deploy --------------------------------------------
 
 console.log("Bundling functions with prod deps only (pnpm deploy)...");
 rmSync("./out/api", { recursive: true, force: true });
-rmSync("./out/api.zip", { force: true });
+// --legacy preserves the original package.json (main, type) — the new pnpm 10
+// deploy implementation strips them, which breaks Azure Functions handler
+// discovery. The resulting bundle still self-contains workspace deps via the
+// node_modules/.pnpm virtual store.
 run("pnpm --filter=@signals/functions --prod deploy --legacy ./out/api");
 
-console.log("Creating deployment zip...");
-run("cd out/api && zip -rq ../api.zip .");
+// --- Single SWA deploy for static + API -------------------------------------
 
-// --- Deploy to Function App -------------------------------------------------
-
-console.log(`Deploying functions to ${funcApp}...`);
-run(
-  "az functionapp deployment source config-zip" +
-    ` --resource-group "${RESOURCE_GROUP}"` +
-    ` --name "${funcApp}"` +
-    " --src out/api.zip",
-);
-
-// --- Deploy static assets to SWA --------------------------------------------
-
-console.log(`Deploying static assets to ${swaApp}...`);
+console.log(`Deploying to ${swaApp}...`);
 run(
   "swa deploy ./packages/dashboard/dist" +
+    " --api-location ./out/api" +
+    " --api-language node" +
+    " --api-version 20" +
     ` --app-name "${swaApp}"` +
     " --env production" +
     " --no-use-keychain",
