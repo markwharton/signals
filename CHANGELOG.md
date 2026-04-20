@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.5.0] - 2026-04-21
+
+### Added
+
+- shared authenticateAdmin helper for dual-path auth (c3d9bfd)
+- /api/summary accepts both principal and API key auth (181d37f)
+- admin api-key scope + ADMIN_API_KEYS wiring (7dd42fd)
+- /api/mcp endpoint (stateless JSON-RPC) (b6fd6ce)
+- sig Go binary — scaffold, config, seven subcommands (2a944b0)
+- force-rollup via ?date + ?days query params (e81a0ce)
+
+### Fixed
+
+- relax MCP signals_summary days schema to match server (c6bc787)
+
+### Changed
+
+- rename sig today to sig day (5d9b40c)
+
+### Documentation
+
+- document raw client keys + alphabetize .env.example (317dfc3)
+- curl smoke tests for each endpoint (70b402b)
+- list per-OS config paths in sig --help and .env.example (bb46ac7)
+
+### Maintenance
+
+- drop budget to $10; expand operations doc (8175a5a)
+- restore go test -race in preRelease now that Go code exists (0fd7c91)
+- build go binary matrix + gh release on v* tag (59034d0)
+- extend raw event retention 7 -> 30 days (3dafceb)
+
 ## [v0.4.0] - 2026-04-20
 
 ### Added
@@ -87,3 +119,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.2.0]: https://github.com/markwharton/signals/compare/v0.1.0...v0.2.0
 [v0.3.0]: https://github.com/markwharton/signals/compare/v0.2.0...v0.3.0
 [v0.4.0]: https://github.com/markwharton/signals/compare/v0.3.0...v0.4.0
+[v0.5.0]: https://github.com/markwharton/signals/compare/v0.4.0...v0.5.0
