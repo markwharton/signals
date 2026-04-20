@@ -103,3 +103,108 @@ az monitor app-insights query --app "$AI_ID" \
 A healthy run shows `daily: rolling up`, `daily: aggregated N event(s)`,
 `daily: rollup rows written`, `daily: deleted M raw event(s)`, and
 `daily: complete` — all within a few seconds of each other.
+
+## Smoke tests
+
+After any meaningful deploy, a minute of curl work catches most
+regressions. Each endpoint has a negative-case variant worth running
+too — a 200 on the happy path isn't reassuring if the auth layer is
+broken and every caller is being let through.
+
+Shared preamble (grabs values from your gitignored env file without
+sourcing the whole thing):
+
+```bash
+URL=https://nice-pebble-0b010a000.7.azurestaticapps.net
+MCP_KEY=$(grep '^MCP_RAW_KEY=' scripts/.env.prod | cut -d= -f2-)
+ADMIN_KEY=$(grep '^ADMIN_RAW_KEY=' scripts/.env.prod | cut -d= -f2-)
+```
+
+### `/beacon.js`
+
+```bash
+curl -sI "$URL/beacon.js" | grep -iE 'HTTP|cache-control'
+```
+
+Expect `HTTP/2 200` and a `cache-control: public, max-age=86400,
+stale-while-revalidate=604800` header. If the `/*` route has
+swallowed `/beacon.js` somehow, you'll see a `302` to GitHub login
+instead — a bad sign for plankit.com visitors.
+
+### `/` (dashboard)
+
+```bash
+curl -sI "$URL/" | grep -iE 'HTTP|location'
+```
+
+Expect `HTTP/2 302` and `location: /.auth/login/github`. A `200` means
+the auth gate has fallen off; a `401` means the response override for
+unauthenticated requests isn't redirecting any more.
+
+### `/api/collect` (anonymous POST)
+
+```bash
+curl -sw "HTTP %{http_code}\n" -X POST \
+  -H 'content-type: text/plain' \
+  -d '{"v":1,"kind":"pageview","site":"plankit.com","path":"/smoke","referrerHost":null,"isMobile":false,"isBot":false}' \
+  "$URL/api/collect"
+```
+
+Expect `HTTP 204` — the beacon path accepts pageviews anonymously by
+design (rate-limiting is the right control there, when it ships).
+
+### `/api/summary` (admin, two auth paths)
+
+```bash
+# API-key path (sig CLI / automation)
+curl -sw "\nHTTP %{http_code}\n" \
+  -H "x-api-key: $ADMIN_KEY" \
+  "$URL/api/summary?days=7" | tail -3
+
+# unauth negative (expect 401)
+curl -sw "HTTP %{http_code}\n" "$URL/api/summary?days=7"
+```
+
+Expect `HTTP 200` with the API key, `HTTP 401` without. The browser
+path (SWA-forwarded `x-ms-client-principal`) is hard to curl — easier
+to just visit the dashboard in a browser and confirm tiles render.
+
+### `/api/mcp` (JSON-RPC)
+
+```bash
+# tool list
+curl -s -X POST "$URL/api/mcp" \
+  -H "x-api-key: $MCP_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' | jq
+
+# call the tool
+curl -s -X POST "$URL/api/mcp" \
+  -H "x-api-key: $MCP_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"signals_summary","arguments":{"days":7}}}' \
+  | jq '.result.content[0].text | fromjson'
+
+# unauth negative (expect JSON-RPC -32001)
+curl -s -X POST "$URL/api/mcp" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":3}' | jq
+```
+
+Successful `tools/list` lists `signals_summary` with its input schema.
+Successful `tools/call` unwraps to the same SummaryResponse shape the
+dashboard and sig CLI get. The negative returns an error body with
+`code: -32001`.
+
+If any step hangs or 500s, App Insights has the details:
+
+```bash
+AI_ID=$(az monitor app-insights component show \
+  --app appi-signals-* --resource-group rg-signals-prod \
+  --query appId -o tsv)
+
+az monitor app-insights query --app "$AI_ID" \
+  --analytics-query "traces | where timestamp > ago(10m) \
+    and severityLevel >= 2 and message !contains 'Unhealthy' \
+    | order by timestamp desc | take 20" -o json
+```
