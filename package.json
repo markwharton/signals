@@ -9,7 +9,8 @@
     "lint": "pnpm -r lint --if-present",
     "deploy": "tsx scripts/deploy.ts",
     "deploy:infra": "bash scripts/deploy-infra.sh",
-    "generate:api-key": "tsx scripts/generate-api-key.ts"
+    "generate:api-key": "tsx scripts/generate-api-key.ts",
+    "rollup": "tsx scripts/rollup.ts"
   },
   "devDependencies": {
     "tsx": "^4.0.0",

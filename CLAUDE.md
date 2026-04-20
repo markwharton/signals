@@ -41,6 +41,7 @@ IMPORTANT: Follow these rules at all times.
 - `pnpm run deploy` — build dashboard + functions, bundle with `pnpm deploy --prod`, upload via `swa deploy`.
 - `pnpm run deploy:infra` — `az deployment group create` against `infra/main.bicep`.
 - `pnpm run generate:api-key -- <scope> <source-id>` — mint a `pk_{scope}_{hex}` key.
+- `pnpm run rollup -- [--date YYYYMMDD] [--days N]` — force `/api/daily` to run; replay a window within the 30-day raw retention.
 
 ### Architecture constraints (easy to get wrong)
 

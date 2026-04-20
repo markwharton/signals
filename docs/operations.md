@@ -86,6 +86,12 @@ Common orphans encountered in this project:
 
 ## Verifying the daily rollup
 
+A "day" in signals is a **UTC day** (00:00–24:00 UTC), end to end —
+event partition keys, rollup partition keys, the summary window, and
+the Logic App's recurrence trigger all run on UTC. For Brisbane
+(UTC+10) that maps to 10:00 Brisbane → 10:00 Brisbane next day, which
+is why 9am Brisbane traffic rolls up with the *previous* UTC date.
+
 The Logic App POSTs `/api/daily` at 17:00 UTC (03:00 Brisbane next day).
 The morning after a deploy is the first chance to confirm it ran:
 
@@ -103,6 +109,38 @@ az monitor app-insights query --app "$AI_ID" \
 A healthy run shows `daily: rolling up`, `daily: aggregated N event(s)`,
 `daily: rollup rows written`, `daily: deleted M raw event(s)`, and
 `daily: complete` — all within a few seconds of each other.
+
+## Forcing a rollup
+
+`/api/daily` accepts `?date=YYYYMMDD` and `?days=N` (1..30) for manual
+invocations. `scripts/rollup.ts` (wired up as `pnpm run rollup`)
+reads `DAILY_RAW_KEY` from `scripts/.env.${ENVIRONMENT}`, autodetects
+the SWA hostname, and POSTs for you:
+
+```bash
+pnpm run rollup                               # default: yesterday UTC, 1 day
+pnpm run rollup -- --date 20260420            # re-roll a specific UTC day
+pnpm run rollup -- --date 20260420 --days 7   # 7 UTC days ending 20260420
+ENVIRONMENT=dev pnpm run rollup               # point at rg-signals-dev
+```
+
+Two safety rules baked into the handler make re-rolls non-destructive:
+
+- **Empty-partition skip** — if a target day has zero raw events (past
+  retention, or never had any), the handler leaves existing rollup rows
+  untouched instead of writing zeros. Response shows `"skipped": true`.
+- **Cleanup gating** — the 30-day raw-event GC only fires on the
+  default invocation (no `?date`). Manual `?date=` calls never delete
+  source data, so you can re-roll any historical window safely.
+
+The scheduled Logic App call is pinned to `?days=1` so it stays on the
+default semantics even if the handler default ever changes.
+
+Dashboards and `/api/summary` only read rollups up to **yesterday UTC**
+— a same-day rollup lands in the table but isn't shown. Today's
+numbers would shift as events arrived, which isn't what a
+daily-aggregated view is supposed to offer. If you need current-day
+data, query the `events` table directly.
 
 ## Smoke tests
 

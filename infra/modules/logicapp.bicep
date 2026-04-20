@@ -42,7 +42,10 @@ resource dailyLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           type: 'Http'
           inputs: {
             method: 'POST'
-            uri: 'https://${swaDefaultHostname}/api/daily'
+            // Explicit ?days=1 so the scheduled run doesn't silently
+            // shift if the handler default ever changes. Manual
+            // re-rolls go through scripts/rollup.ts with ?date= override.
+            uri: 'https://${swaDefaultHostname}/api/daily?days=1'
             headers: {
               'x-api-key': dailyRawKey
             }
