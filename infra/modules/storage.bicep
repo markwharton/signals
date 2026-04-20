@@ -1,11 +1,9 @@
-// Storage account + Tables (events, rollups) + a blob container for
-// Flex Consumption deployment zips. Role assignments that grant the
-// Function App's managed identity Blob Data Owner / Table Data Contributor
-// live in main.bicep so the storage module stays ignorant of who else
-// uses it.
+// Storage account + Tables (events, rollups). Auth is via connection
+// string read from the SWA app settings at function runtime — no MI,
+// no role assignments, no deployment container. Matches Timekeeper's
+// reference pattern.
 
 param storageAccountName string
-param deploymentContainerName string
 param location string
 param tags object = {}
 
@@ -21,19 +19,6 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
-  }
-}
-
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
-  parent: storageAccount
-  name: 'default'
-}
-
-resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
-  parent: blobService
-  name: deploymentContainerName
-  properties: {
-    publicAccess: 'None'
   }
 }
 

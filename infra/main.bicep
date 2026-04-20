@@ -2,18 +2,18 @@
 // site-observability tool. The data plane sits in australiaeast; SWA sits
 // in eastasia because no AU region is available for SWA.
 //
-// Auth model: the Function App's system-assigned managed identity is granted
-// Storage Blob Data Owner (for its own Flex Consumption deployment container
-// and AzureWebJobsStorage internal state) and Storage Table Data Contributor
-// (for the events/rollups tables) directly on the storage account. There is
-// no connection string and no Key Vault in the hot path.
+// Pattern mirrors ~/Projects/markwharton/timekeeper: SWA Free plan hosts
+// Managed Functions that read a plain storage connection string from app
+// settings. A Logic App drives the daily rollup via an HTTP POST to
+// /api/daily, because SWA Managed Functions support HTTP triggers only.
+// No separate Function App, no Key Vault references, no managed identity.
 
 targetScope = 'resourceGroup'
 
 @description('App name prefix for CAF naming')
 param appName string = 'signals'
 
-@description('Primary region for storage, compute, monitoring, Function App')
+@description('Primary region for storage, monitoring, Logic App')
 param location string = 'australiaeast'
 
 @description('SWA region — limited availability, no AU region')
@@ -33,15 +33,17 @@ param signalsMode string = 'counter'
 @description('Timezone for the app (TZ env var)')
 param timezone string = 'Australia/Brisbane'
 
+@description('Raw API key for Logic App → /api/daily (generated via scripts/generate-api-key.ts)')
+@secure()
+param dailyRawKey string
+
+@description('Hashed API key entries for /api/daily (sourceId:sha256:hash, comma-separated)')
+@secure()
+param dailyApiKeys string
+
 @description('Hashed API key entries for /api/mcp (sourceId:sha256:hash, comma-separated; optional)')
 @secure()
 param mcpApiKeys string = ''
-
-@description('Explicit list of origins allowed to POST to /api/collect. Leave default for production; widen in dev/staging via parameters file.')
-param corsAllowedOrigins array = [
-  'https://${siteId}'
-  'https://www.${siteId}'
-]
 
 @description('Monthly cost ceiling (currency follows the billing account) for the resource group. Set ~5-10x normal burn to catch runaway spend without firing on noise.')
 param monthlyBudgetAmount int = 25
@@ -58,14 +60,7 @@ var storageAccountName = 'st${appName}${uniqueSuffix}'
 var staticWebAppName = 'stapp-${appName}-${uniqueSuffix}'
 var applicationInsightsName = 'appi-${appName}-${uniqueSuffix}'
 var logAnalyticsWorkspaceName = 'log-${appName}-${uniqueSuffix}'
-var functionAppName = 'func-${appName}-${uniqueSuffix}'
-var hostingPlanName = 'asp-${appName}-${uniqueSuffix}'
-var deploymentContainerName = 'function-deployments'
-
-// Built-in role definition IDs — stored as vars for readability at the
-// role-assignment use sites.
-var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
-var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+var logicAppName = 'logic-${appName}-daily-${uniqueSuffix}'
 
 var commonTags = {
   app: appName
@@ -88,26 +83,7 @@ module storage 'modules/storage.bicep' = {
   name: 'storage-deploy'
   params: {
     storageAccountName: storageAccountName
-    deploymentContainerName: deploymentContainerName
     location: location
-    tags: commonTags
-  }
-}
-
-module functionapp 'modules/functionapp.bicep' = {
-  name: 'functionapp-deploy'
-  params: {
-    functionAppName: functionAppName
-    hostingPlanName: hostingPlanName
-    location: location
-    storageAccountName: storage.outputs.name
-    deploymentContainerName: deploymentContainerName
-    applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
-    mcpApiKeys: mcpApiKeys
-    signalsMode: signalsMode
-    siteId: siteId
-    timezone: timezone
-    corsAllowedOrigins: corsAllowedOrigins
     tags: commonTags
   }
 }
@@ -117,6 +93,24 @@ module swa 'modules/swa.bicep' = {
   params: {
     staticWebAppName: staticWebAppName
     location: staticWebAppLocation
+    storageAccountName: storage.outputs.name
+    applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
+    signalsMode: signalsMode
+    siteId: siteId
+    timezone: timezone
+    dailyApiKeys: dailyApiKeys
+    mcpApiKeys: mcpApiKeys
+    tags: commonTags
+  }
+}
+
+module logicapp 'modules/logicapp.bicep' = {
+  name: 'logicapp-deploy'
+  params: {
+    logicAppName: logicAppName
+    location: location
+    swaDefaultHostname: swa.outputs.defaultHostname
+    dailyRawKey: dailyRawKey
     tags: commonTags
   }
 }
@@ -130,45 +124,11 @@ module budget 'modules/budget.bicep' = {
   }
 }
 
-// --- Role assignments --------------------------------------------------------
-
-// `existing` reference with a known-at-start name lets the role-assignment
-// `scope` be resolvable before the storage module runs. The actual resource
-// still needs to be created first (implicit dependency via storage module).
-resource storageAccountExisting 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: storageAccountName
-  dependsOn: [storage]
-}
-
-// Role-assignment names must be computable at start, so they use the
-// resource-name vars directly (not module outputs). The `principalId` in
-// properties is a module output and is resolved lazily, which is allowed.
-resource funcBlobOwnerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccountName, functionAppName, storageBlobDataOwnerRoleId)
-  scope: storageAccountExisting
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
-    principalId: functionapp.outputs.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource funcTableContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccountName, functionAppName, storageTableDataContributorRoleId)
-  scope: storageAccountExisting
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
-    principalId: functionapp.outputs.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 // --- Outputs -----------------------------------------------------------------
 
 output staticWebAppName string = swa.outputs.name
 output staticWebAppUrl string = 'https://${swa.outputs.defaultHostname}'
-output functionAppName string = functionapp.outputs.name
-output functionAppUrl string = 'https://${functionapp.outputs.defaultHostname}'
 output storageAccountName string = storage.outputs.name
 output storageTableEndpoint string = storage.outputs.tableEndpoint
 output applicationInsightsName string = monitoring.outputs.applicationInsightsName
+output logicAppName string = logicapp.outputs.name
