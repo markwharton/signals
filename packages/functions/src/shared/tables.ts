@@ -1,26 +1,22 @@
 import { TableClient } from "@azure/data-tables";
-import { DefaultAzureCredential } from "@azure/identity";
 
-const ENDPOINT_ENV = "STORAGE_TABLE_ENDPOINT";
-
-let cachedCredential: DefaultAzureCredential | undefined;
+const CONNECTION_ENV = "STORAGE_CONNECTION_STRING";
 
 /**
- * Return a TableClient for the given table name, authenticating with the
- * SWA's system-assigned managed identity. The MI is granted "Storage Table
- * Data Contributor" on the storage account by infra, so no connection string
- * or secret is required at runtime.
+ * Return a TableClient for the given table name, built from the plain
+ * connection string in STORAGE_CONNECTION_STRING. Written to SWA app
+ * settings by the Bicep template at deploy time — no KV reference, no
+ * managed identity in the hot path.
  */
 export function getTableClient(tableName: string): TableClient {
-  const endpoint = process.env[ENDPOINT_ENV];
-  if (!endpoint) {
+  const connectionString = process.env[CONNECTION_ENV];
+  if (!connectionString) {
     throw new Error(
-      `Missing ${ENDPOINT_ENV} environment variable — expected a Storage` +
-        ` Table endpoint like https://<account>.table.core.windows.net/.`,
+      `Missing ${CONNECTION_ENV} environment variable — expected a plain` +
+        ` storage connection string written by the SWA Bicep at deploy time.`,
     );
   }
-  cachedCredential ??= new DefaultAzureCredential();
-  return new TableClient(endpoint, tableName, cachedCredential);
+  return TableClient.fromConnectionString(connectionString, tableName);
 }
 
 export const TABLE_EVENTS = "events";

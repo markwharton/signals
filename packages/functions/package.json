@@ -12,7 +12,6 @@
     "@signals/shared": "workspace:*",
     "@azure/functions": "^4.5.0",
     "@azure/data-tables": "^13.3.0",
-    "@azure/identity": "^4.4.0",
     "ulid": "^3.0.2"
   }
 }

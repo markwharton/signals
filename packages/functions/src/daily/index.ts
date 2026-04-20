@@ -1,5 +1,9 @@
 import type { TableClient } from "@azure/data-tables";
-import type { InvocationContext, Timer } from "@azure/functions";
+import type {
+  HttpRequest,
+  HttpResponseInit,
+  InvocationContext,
+} from "@azure/functions";
 import { app } from "@azure/functions";
 import type { RollupDimension } from "@signals/shared";
 import {
@@ -9,12 +13,15 @@ import {
   referrerRowKey,
   rollupPartitionKey,
 } from "@signals/shared";
+import { validateApiKey } from "../shared/apiKey.js";
 import { TABLE_EVENTS, TABLE_ROLLUPS, getTableClient } from "../shared/tables.js";
 
-// Events are kept on the raw table for this many days after rollup so the
-// rollup logic can be re-run if a bug surfaces early. After the window,
-// the partition for day-(N+1) is deleted on each run so storage doesn't
-// grow unbounded.
+// HTTP-triggered; a Logic App POSTs here at 17:00 UTC daily with an
+// x-api-key header validated against DAILY_API_KEYS. SWA Managed
+// Functions support HTTP triggers only, which is why this isn't a
+// native timer. Logic App's recurrence engine stands in for the
+// missing timer trigger.
+
 const RAW_RETENTION_DAYS = 7;
 
 interface Counts {
@@ -61,32 +68,38 @@ function utcDaysAgo(now: Date, days: number): Date {
   return d;
 }
 
-app.timer("daily", {
-  // Six-field CRON: sec min hour day mo dow. 17:00 UTC = 03:00 Brisbane
-  // next day (Queensland is UTC+10 year-round, no DST). By 17:00 UTC the
-  // previous UTC day is definitively closed, so yesterday's partitions
-  // contain no late arrivals.
-  schedule: "0 0 17 * * *",
-  handler: async (timer: Timer, ctx: InvocationContext): Promise<void> => {
+app.http("daily", {
+  route: "daily",
+  methods: ["POST"],
+  authLevel: "anonymous",
+  handler: async (
+    req: HttpRequest,
+    ctx: InvocationContext,
+  ): Promise<HttpResponseInit> => {
+    const sourceId = validateApiKey(
+      "DAILY_API_KEYS",
+      req.headers.get("x-api-key"),
+    );
+    if (!sourceId) {
+      ctx.warn("daily: missing or invalid x-api-key");
+      return { status: 401 };
+    }
+
     const site = process.env.SIGNALS_SITE_ID;
     if (!site) {
-      ctx.error("daily: SIGNALS_SITE_ID is not set; aborting");
-      return;
+      ctx.error("daily: SIGNALS_SITE_ID not set");
+      return { status: 500 };
     }
 
     const now = new Date();
     const target = utcDaysAgo(now, 1);
     const targetYmd = yyyymmdd(target);
 
-    ctx.log(
-      `daily: rolling up ${site} ${targetYmd} (isPastDue=${timer.isPastDue})`,
-    );
+    ctx.log(`daily: rolling up ${site} ${targetYmd} (source=${sourceId})`);
 
     const events = getTableClient(TABLE_EVENTS);
     const rollups = getTableClient(TABLE_ROLLUPS);
 
-    // In-memory counters. Map keys are pre-computed row keys so writing to
-    // Azure Tables is a straight pass-through — no second round of encoding.
     const pathCounts = new Map<string, Counts>();
     const refCounts = new Map<string, Counts>();
     const deviceCounts = new Map<string, Counts>();
@@ -135,11 +148,6 @@ app.timer("daily", {
         `device=${deviceRows} pathxreferrer=${pathxRefRows}`,
     );
 
-    // Retention sweep: drop the single partition that just fell outside the
-    // retention window. Steady-state this deletes one UTC day's raw
-    // partitions per run; if the function hasn't run for a while, older
-    // days stay until caught up manually. Idempotent — deleting an
-    // already-empty partition is a no-op.
     const cleanupTarget = utcDaysAgo(now, RAW_RETENTION_DAYS + 1);
     const cleanupYmd = yyyymmdd(cleanupTarget);
     let deleted = 0;
@@ -149,6 +157,21 @@ app.timer("daily", {
     }
     ctx.log(`daily: deleted ${deleted} raw event(s) from ${cleanupYmd}`);
     ctx.log("daily: complete");
+
+    return {
+      status: 200,
+      jsonBody: {
+        date: targetYmd,
+        events: eventCount,
+        rollupRows: {
+          path: pathRows,
+          referrer: refRows,
+          device: deviceRows,
+          pathxreferrer: pathxRefRows,
+        },
+        rawDeleted: deleted,
+      },
+    };
   },
 });
 
@@ -162,8 +185,6 @@ async function upsertDimension(
   const partitionKey = rollupPartitionKey(site, date, dimension);
   let written = 0;
   for (const [rowKey, c] of counts) {
-    // InsertOrReplace — re-running for the same date overwrites with the
-    // same numbers, keeping retries / manual re-runs idempotent.
     await rollups.upsertEntity(
       {
         partitionKey,
