@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.4.0] - 2026-04-20
+
+### Added
+
+- scaffold Vite + React + TS + shadcn/ui + Tailwind (ffd0111)
+- github auth + signals_admin role gate (7c0fdb1)
+- add /api/summary endpoint reading rollups (7fb1062)
+- set GITHUB_CLIENT_ID/SECRET via bicep (20205fe)
+- six tiles + sparkline + responsive grid + toggles (ee0e61f)
+- dark mode with persisted preference (726e141)
+
+### Removed
+
+- rewind to SWA Managed Functions + Logic App (Timekeeper pattern) (f6e7179)
+- storage via connection string; /api/daily as HTTP trigger (edd9b8a)
+- swa --api-location; daily api keys; summary behind signals_admin (f21874a)
+
+### Documentation
+
+- add .env.example template for deploy-infra secrets (f7c0fcc)
+
 ## [v0.3.0] - 2026-04-20
 
 ### Added
@@ -65,3 +86,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.0]: https://github.com/markwharton/signals/compare/v0.0.0...v0.1.0
 [v0.2.0]: https://github.com/markwharton/signals/compare/v0.1.0...v0.2.0
 [v0.3.0]: https://github.com/markwharton/signals/compare/v0.2.0...v0.3.0
+[v0.4.0]: https://github.com/markwharton/signals/compare/v0.3.0...v0.4.0
