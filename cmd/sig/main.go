@@ -22,6 +22,7 @@ import (
 	"os"
 
 	"github.com/markwharton/signals/internal/config"
+	"github.com/markwharton/signals/internal/version"
 )
 
 const usage = `sig — query signals from the terminal
@@ -59,6 +60,9 @@ func main() {
 	switch cmd {
 	case "-h", "--help", "help":
 		fmt.Print(usage)
+		return
+	case "-v", "--version", "version":
+		fmt.Println(version.Version())
 		return
 	case "today":
 		run(cmdToday, args)
