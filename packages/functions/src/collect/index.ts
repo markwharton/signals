@@ -50,6 +50,10 @@ app.http("collect", {
         path: normalizePath(request.path),
         referrerHost: request.referrerHost,
         isMobile: request.isMobile,
+        // Default `false` covers the beacon-cache transition window:
+        // old cached beacons don't emit `isBot`, and the stored schema
+        // requires a concrete boolean so rollups don't have to guess.
+        isBot: request.isBot ?? false,
         ts: now.toISOString(),
       };
 
@@ -92,5 +96,8 @@ function isCollectRequest(x: unknown): x is CollectRequest {
     return false;
   }
   if (typeof r.isMobile !== "boolean") return false;
+  // `isBot` is optional on the wire (transition window); when present,
+  // it must be a boolean. Missing is handled by a default at write time.
+  if (r.isBot !== undefined && typeof r.isBot !== "boolean") return false;
   return true;
 }
