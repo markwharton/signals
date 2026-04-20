@@ -3,3 +3,4 @@
 // handlers here.
 import "./collect/index.js";
 import "./daily/index.js";
+import "./summary/index.js";
