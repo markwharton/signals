@@ -10,6 +10,7 @@
  *   pnpm run generate:api-key                           # show usage
  *   pnpm run generate:api-key daily logic-app           # mint a daily key
  *   pnpm run generate:api-key mcp claude-desktop        # mint an mcp key
+ *   pnpm run generate:api-key admin sig-cli             # mint an admin key for CLI use
  *
  * A leading `--` separator is tolerated for muscle memory from older pnpm/npm.
  */
@@ -29,6 +30,10 @@ const SCOPES: Record<string, ScopeConfig> = {
   mcp: {
     envVar: "MCP_API_KEYS",
     endpoint: "POST /api/mcp",
+  },
+  admin: {
+    envVar: "ADMIN_API_KEYS",
+    endpoint: "GET /api/summary (CLI / automation)",
   },
 };
 

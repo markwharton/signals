@@ -2,9 +2,9 @@
 # Deploy signals infrastructure to Azure.
 #
 # Secrets (DAILY_RAW_KEY, DAILY_API_KEYS, GITHUB_CLIENT_ID,
-# GITHUB_CLIENT_SECRET, optionally MCP_API_KEYS) are sourced from
-# scripts/.env.${ENVIRONMENT} when present; in CI they come from the
-# workflow's secrets.
+# GITHUB_CLIENT_SECRET required; MCP_API_KEYS and ADMIN_API_KEYS
+# optional) are sourced from scripts/.env.${ENVIRONMENT} when present;
+# in CI they come from the workflow's secrets.
 #
 # Usage:
 #   pnpm run deploy:infra                 # ENVIRONMENT=prod
@@ -47,6 +47,7 @@ az deployment group create \
   --parameters dailyRawKey="$DAILY_RAW_KEY" \
                dailyApiKeys="$DAILY_API_KEYS" \
                mcpApiKeys="${MCP_API_KEYS:-}" \
+               adminApiKeys="${ADMIN_API_KEYS:-}" \
                githubClientId="$GITHUB_CLIENT_ID" \
                githubClientSecret="$GITHUB_CLIENT_SECRET"
 

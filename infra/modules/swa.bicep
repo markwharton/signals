@@ -19,6 +19,9 @@ param dailyApiKeys string
 @secure()
 param mcpApiKeys string = ''
 
+@secure()
+param adminApiKeys string = ''
+
 @description('GitHub OAuth App client ID — stored in app settings and referenced by clientIdSettingName in staticwebapp.config.json.')
 @secure()
 param githubClientId string
@@ -66,6 +69,8 @@ resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2023-01-01' = {
     TZ: timezone
   }, !empty(mcpApiKeys) ? {
     MCP_API_KEYS: mcpApiKeys
+  } : {}, !empty(adminApiKeys) ? {
+    ADMIN_API_KEYS: adminApiKeys
   } : {})
 }
 

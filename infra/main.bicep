@@ -45,6 +45,10 @@ param dailyApiKeys string
 @secure()
 param mcpApiKeys string = ''
 
+@description('Hashed API key entries for admin read endpoints — CLI and automation consumers of /api/summary (sourceId:sha256:hash, comma-separated; optional)')
+@secure()
+param adminApiKeys string = ''
+
 @description('GitHub OAuth App client ID for SWA auth. Create the OAuth app at https://github.com/settings/developers with callback https://<swa-hostname>/.auth/login/github/callback.')
 @secure()
 param githubClientId string
@@ -108,6 +112,7 @@ module swa 'modules/swa.bicep' = {
     timezone: timezone
     dailyApiKeys: dailyApiKeys
     mcpApiKeys: mcpApiKeys
+    adminApiKeys: adminApiKeys
     githubClientId: githubClientId
     githubClientSecret: githubClientSecret
     tags: commonTags
