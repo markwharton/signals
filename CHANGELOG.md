@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.3.0] - 2026-04-20
+
+### Added
+
+- use isbot library for bot detection (4511a6d)
+- accept and store isBot field in collect handler (33b5e31)
+- detect bots via isbot, switch to esbuild bundle (b04c3c9)
+- add rollup types and partition-key builders (361fb69)
+- add daily timer-triggered rollup function (916d5e0)
+
+### Documentation
+
+- capture hosting decision triggers (cdf7ce9)
+
+### Maintenance
+
+- remove Logic App resource (timer trigger replaces it) (dedc80a)
+
 ## [v0.2.0] - 2026-04-20
 
 ### Added
@@ -46,3 +64,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 [v0.1.0]: https://github.com/markwharton/signals/compare/v0.0.0...v0.1.0
 [v0.2.0]: https://github.com/markwharton/signals/compare/v0.1.0...v0.2.0
+[v0.3.0]: https://github.com/markwharton/signals/compare/v0.2.0...v0.3.0
