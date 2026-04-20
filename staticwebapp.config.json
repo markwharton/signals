@@ -1,14 +1,47 @@
 {
+  "auth": {
+    "identityProviders": {
+      "github": {
+        "registration": {
+          "clientIdSettingName": "GITHUB_CLIENT_ID",
+          "clientSecretSettingName": "GITHUB_CLIENT_SECRET"
+        }
+      }
+    }
+  },
   "routes": [
     {
       "route": "/beacon.js",
+      "allowedRoles": ["anonymous"],
       "headers": {
         "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"
       }
+    },
+    {
+      "route": "/login",
+      "rewrite": "/.auth/login/github"
+    },
+    {
+      "route": "/logout",
+      "rewrite": "/.auth/logout"
+    },
+    {
+      "route": "/api/*",
+      "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/*",
+      "allowedRoles": ["signals_admin"]
     }
   ],
+  "responseOverrides": {
+    "401": {
+      "redirect": "/.auth/login/github",
+      "statusCode": 302
+    }
+  },
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/*.{css,js,ico,png,svg,jpg,webp}"]
+    "exclude": ["/api/*", "/beacon.js", "/*.{css,js,ico,png,svg,jpg,webp,woff2}"]
   }
 }
