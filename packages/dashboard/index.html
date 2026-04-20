@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>signals</title>
+    <script>
+      // Set initial theme before the React bundle runs — prevents a
+      // flash of light mode when the user's preference is dark. Stays
+      // in sync with DarkModeToggle.tsx; both read localStorage.theme
+      // with matchMedia as fallback when unset.
+      (function () {
+        try {
+          var saved = localStorage.getItem("theme");
+          var dark =
+            saved === "dark" ||
+            (saved === null &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (_) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

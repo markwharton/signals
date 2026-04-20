@@ -1,3 +1,4 @@
+import { DarkModeToggle } from "@/components/DarkModeToggle";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { TimespanParam } from "@/lib/api";
@@ -33,6 +34,7 @@ export function Header({
           <Switch checked={showBots} onCheckedChange={onShowBotsChange} />
           Show bots
         </label>
+        <DarkModeToggle />
       </div>
     </header>
   );
