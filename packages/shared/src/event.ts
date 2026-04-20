@@ -10,6 +10,11 @@ export interface BaseStoredEvent {
   site: string;
   /** ISO 8601 UTC timestamp, set server-side on receipt. */
   ts: string;
+  /** True when the beacon's isbot check flagged this request's UA. Stored
+   *  as a concrete boolean on every row so rollups can split non-bot and
+   *  bot traffic into distinct counter columns without defaulting at
+   *  read time. */
+  isBot: boolean;
 }
 
 /** A pageview — a successfully served page. */
@@ -37,7 +42,13 @@ export interface NotFoundEvent extends BaseStoredEvent {
 /** Union of all stored event kinds. Extend as new kinds land. */
 export type Event = PageviewEvent | NotFoundEvent;
 
-/** Wire format — what the beacon POSTs to /api/collect. */
+/** Wire format — what the beacon POSTs to /api/collect.
+ *
+ *  `isBot` is optional during the beacon-cache transition window after
+ *  adding the field: old cached beacons don't emit it. The server
+ *  defaults missing to `false` when writing the stored entity, so every
+ *  stored row carries a concrete boolean. Tighten to required in a
+ *  future release once all beacons have refreshed. */
 export interface CollectRequest {
   v: 1;
   kind: "pageview" | "404";
@@ -45,6 +56,7 @@ export interface CollectRequest {
   path: string;
   referrerHost: string | null;
   isMobile: boolean;
+  isBot?: boolean;
 }
 
 /**
