@@ -19,6 +19,14 @@ param dailyApiKeys string
 @secure()
 param mcpApiKeys string = ''
 
+@description('GitHub OAuth App client ID — stored in app settings and referenced by clientIdSettingName in staticwebapp.config.json.')
+@secure()
+param githubClientId string
+
+@description('GitHub OAuth App client secret — stored in app settings and referenced by clientSecretSettingName in staticwebapp.config.json.')
+@secure()
+param githubClientSecret string
+
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
 }
@@ -52,6 +60,8 @@ resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2023-01-01' = {
     SIGNALS_SITE_ID: siteId
     APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsightsConnectionString
     DAILY_API_KEYS: dailyApiKeys
+    GITHUB_CLIENT_ID: githubClientId
+    GITHUB_CLIENT_SECRET: githubClientSecret
     NODE_ENV: 'production'
     TZ: timezone
   }, !empty(mcpApiKeys) ? {

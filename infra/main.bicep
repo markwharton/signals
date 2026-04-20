@@ -45,6 +45,14 @@ param dailyApiKeys string
 @secure()
 param mcpApiKeys string = ''
 
+@description('GitHub OAuth App client ID for SWA auth. Create the OAuth app at https://github.com/settings/developers with callback https://<swa-hostname>/.auth/login/github/callback.')
+@secure()
+param githubClientId string
+
+@description('GitHub OAuth App client secret (companion to githubClientId).')
+@secure()
+param githubClientSecret string
+
 @description('Monthly cost ceiling (currency follows the billing account) for the resource group. Set ~5-10x normal burn to catch runaway spend without firing on noise.')
 param monthlyBudgetAmount int = 25
 
@@ -100,6 +108,8 @@ module swa 'modules/swa.bicep' = {
     timezone: timezone
     dailyApiKeys: dailyApiKeys
     mcpApiKeys: mcpApiKeys
+    githubClientId: githubClientId
+    githubClientSecret: githubClientSecret
     tags: commonTags
   }
 }

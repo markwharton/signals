@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Deploy signals infrastructure to Azure.
 #
-# Secrets (DAILY_RAW_KEY, DAILY_API_KEYS, optionally MCP_API_KEYS) are
-# sourced from scripts/.env.${ENVIRONMENT} when present; in CI they come
-# from the workflow's secrets.
+# Secrets (DAILY_RAW_KEY, DAILY_API_KEYS, GITHUB_CLIENT_ID,
+# GITHUB_CLIENT_SECRET, optionally MCP_API_KEYS) are sourced from
+# scripts/.env.${ENVIRONMENT} when present; in CI they come from the
+# workflow's secrets.
 #
 # Usage:
 #   pnpm run deploy:infra                 # ENVIRONMENT=prod
@@ -28,6 +29,14 @@ if [[ -z "${DAILY_API_KEYS:-}" ]]; then
   echo "ERROR: DAILY_API_KEYS is not set. Source $ENV_FILE or export it before running." >&2
   exit 1
 fi
+if [[ -z "${GITHUB_CLIENT_ID:-}" ]]; then
+  echo "ERROR: GITHUB_CLIENT_ID is not set. Source $ENV_FILE or export it before running." >&2
+  exit 1
+fi
+if [[ -z "${GITHUB_CLIENT_SECRET:-}" ]]; then
+  echo "ERROR: GITHUB_CLIENT_SECRET is not set. Source $ENV_FILE or export it before running." >&2
+  exit 1
+fi
 
 az group create -n "$RG" -l australiaeast --query id -o tsv > /dev/null
 
@@ -37,7 +46,9 @@ az deployment group create \
   --parameters "infra/parameters.${ENVIRONMENT}.json" \
   --parameters dailyRawKey="$DAILY_RAW_KEY" \
                dailyApiKeys="$DAILY_API_KEYS" \
-               mcpApiKeys="${MCP_API_KEYS:-}"
+               mcpApiKeys="${MCP_API_KEYS:-}" \
+               githubClientId="$GITHUB_CLIENT_ID" \
+               githubClientSecret="$GITHUB_CLIENT_SECRET"
 
 echo
 echo "Infra deployed. Next step:"
