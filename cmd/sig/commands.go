@@ -8,11 +8,11 @@ import (
 	"github.com/markwharton/signals/internal/render"
 )
 
-// cmdToday and cmdWeek both render the full summary; they differ
-// only in default window. Today omits the sparkline (it'd be a
-// single bar) but is otherwise identical to week.
-func cmdToday(args []string) error {
-	flags, summary, err := setup("today", args, "1")
+// cmdDay and cmdWeek both render the full summary; they differ
+// only in default window. Day omits the sparkline (it'd be a single
+// bar) but is otherwise identical to week.
+func cmdDay(args []string) error {
+	flags, summary, err := setup("day", args, "1")
 	if err != nil {
 		return err
 	}

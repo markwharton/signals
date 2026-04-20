@@ -1,9 +1,9 @@
 // Command sig — terminal-flavored signals reader.
 //
-// Seven subcommands, one for each dashboard tile plus a compact
-// "sig today" / "sig week" summary view:
+// Seven subcommands, one for each dashboard tile plus compact
+// "sig day" / "sig week" summary views:
 //
-//   sig today       compact view of yesterday UTC
+//   sig day         compact view of the most recent complete UTC day
 //   sig week        last 7 days with sparkline
 //   sig paths       top paths ranking
 //   sig referrers   top referrers ranking
@@ -28,7 +28,7 @@ import (
 const usage = `sig — query signals from the terminal
 
 Commands:
-  today             compact view of yesterday UTC
+  day               compact view of the most recent complete UTC day
   week              last 7 days with sparkline
   paths             top paths ranking
   referrers         top referrers ranking
@@ -64,8 +64,8 @@ func main() {
 	case "-v", "--version", "version":
 		fmt.Println(version.Version())
 		return
-	case "today":
-		run(cmdToday, args)
+	case "day":
+		run(cmdDay, args)
 	case "week":
 		run(cmdWeek, args)
 	case "paths":
