@@ -6,6 +6,7 @@ import {
   decodePathRowKey,
   rollupPartitionKey,
 } from "@signals/shared";
+import { authenticateAdmin, describeAuth } from "../shared/auth.js";
 import { TABLE_ROLLUPS, getTableClient } from "../shared/tables.js";
 
 const TOP_N = 5;
@@ -53,6 +54,11 @@ app.http("summary", {
     req: HttpRequest,
     ctx: InvocationContext,
   ): Promise<HttpResponseInit> => {
+    const auth = authenticateAdmin(req);
+    if (!auth) {
+      return { status: 401 };
+    }
+
     const site = process.env.SIGNALS_SITE_ID;
     if (!site) {
       ctx.error("summary: SIGNALS_SITE_ID not set");
@@ -77,6 +83,8 @@ app.http("summary", {
     const now = new Date();
     const endDate = utcMidnightDaysAgo(now, 1);
     const startDate = utcMidnightDaysAgo(endDate, days - 1);
+
+    ctx.log(`summary: ${describeAuth(auth)} days=${days}`);
 
     const rollups = getTableClient(TABLE_ROLLUPS);
 

@@ -26,10 +26,6 @@
       "rewrite": "/.auth/logout"
     },
     {
-      "route": "/api/summary",
-      "allowedRoles": ["signals_admin"]
-    },
-    {
       "route": "/api/*",
       "allowedRoles": ["anonymous"]
     },
