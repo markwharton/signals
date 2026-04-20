@@ -53,8 +53,8 @@ param githubClientId string
 @secure()
 param githubClientSecret string
 
-@description('Monthly cost ceiling (currency follows the billing account) for the resource group. Set ~5-10x normal burn to catch runaway spend without firing on noise.')
-param monthlyBudgetAmount int = 25
+@description('Monthly cost ceiling (currency follows the billing account) for the resource group. Set ~5x normal burn to catch anomalies without firing on noise — with SWA Free + Logic App + Storage, real burn is ~$0-2/month.')
+param monthlyBudgetAmount int = 10
 
 @description('Emails that receive budget notifications at 50% actual, 100% actual, and 100% forecasted.')
 param budgetContactEmails array = [
