@@ -10,7 +10,7 @@
   "release": {
     "branch": "main",
     "hooks": {
-      "preRelease": "pnpm install --frozen-lockfile && pnpm -r run --if-present lint && pnpm -r run --if-present test && pnpm -r run --if-present build"
+      "preRelease": "pnpm install --frozen-lockfile && pnpm -r run --if-present lint && pnpm -r run --if-present test && pnpm -r run --if-present build && go test -race ./..."
     }
   }
 }
