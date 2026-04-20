@@ -3,4 +3,5 @@
 // handlers here.
 import "./collect/index.js";
 import "./daily/index.js";
+import "./mcp/index.js";
 import "./summary/index.js";

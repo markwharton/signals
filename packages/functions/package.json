@@ -12,6 +12,8 @@
     "@signals/shared": "workspace:*",
     "@azure/functions": "^4.5.0",
     "@azure/data-tables": "^13.3.0",
-    "ulid": "^3.0.2"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ulid": "^3.0.2",
+    "zod": "^3.23.0"
   }
 }
