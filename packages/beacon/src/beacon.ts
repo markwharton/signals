@@ -21,11 +21,16 @@
 //
 // Privacy envelope: no cookies, no IPs, no fingerprints, no sessions,
 // no raw user-agent, no referrer query strings. The payload includes
-// only the fields the privacy policy enumerates.
+// only the fields the privacy policy enumerates. Bot classification is
+// done client-side via isbot; only the derived boolean crosses the wire.
 //
-// No imports by design — tsc emits a self-contained <script>-safe file.
-// The payload shape mirrors CollectRequest in @signals/shared; the server
+// Built by esbuild as a single IIFE so the output is safe to embed in a
+// plain <script> tag without type="module". isbot is inlined by the
+// bundler; the `import { isbot }` below resolves at build time. The
+// payload shape mirrors CollectRequest in @signals/shared; the server
 // validates on receipt, so a drift surfaces as a rejected request.
+
+import { isbot } from "isbot";
 
 interface CollectPayload {
   v: 1;
@@ -34,6 +39,7 @@ interface CollectPayload {
   path: string;
   referrerHost: string | null;
   isMobile: boolean;
+  isBot: boolean;
 }
 
 (function signalsBeacon(): void {
@@ -58,6 +64,7 @@ interface CollectPayload {
     path: location.pathname,
     referrerHost: computeReferrerHost(document.referrer, location.hostname),
     isMobile: detectMobile(),
+    isBot: detectBot(),
   };
 
   const blob = new Blob([JSON.stringify(payload)], { type: "text/plain" });
@@ -111,6 +118,10 @@ function computeReferrerHost(
   }
   if (url.hostname === currentHostname) return null;
   return url.hostname.replace(/^www\./, "").toLowerCase();
+}
+
+function detectBot(): boolean {
+  return isbot(navigator.userAgent);
 }
 
 function detectMobile(): boolean {

@@ -4,10 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && mkdir -p ../dashboard/public && cp dist/beacon.js ../dashboard/public/beacon.js",
+    "build": "esbuild src/beacon.ts --bundle --minify=false --format=iife --outfile=dist/beacon.js && mkdir -p ../dashboard/public && cp dist/beacon.js ../dashboard/public/beacon.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@signals/shared": "workspace:*"
+    "@signals/shared": "workspace:*",
+    "isbot": "^5.1.37"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.0"
   }
 }
