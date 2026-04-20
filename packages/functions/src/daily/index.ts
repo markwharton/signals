@@ -22,7 +22,14 @@ import { TABLE_EVENTS, TABLE_ROLLUPS, getTableClient } from "../shared/tables.js
 // native timer. Logic App's recurrence engine stands in for the
 // missing timer trigger.
 
-const RAW_RETENTION_DAYS = 7;
+// 30 days gives a month of re-roll latitude: if the rollup logic
+// changes, a bug surfaces, or a test run needs to replay past data,
+// the raw events are still in the events table to re-process. Pre-30
+// this was 7 days, which bit us during phase-5 testing when we
+// wanted to manually replay a window and the events were already
+// GC'd. Cost is a few MB of Table Storage at plankit.com volume —
+// pennies per month — so the wider safety net is the obvious trade.
+const RAW_RETENTION_DAYS = 30;
 
 interface Counts {
   pageviews: number;
