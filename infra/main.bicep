@@ -13,7 +13,7 @@ targetScope = 'resourceGroup'
 @description('App name prefix for CAF naming')
 param appName string = 'signals'
 
-@description('Primary region for storage, compute, monitoring, Logic App')
+@description('Primary region for storage, compute, monitoring, Function App')
 param location string = 'australiaeast'
 
 @description('SWA region — limited availability, no AU region')
@@ -32,14 +32,6 @@ param signalsMode string = 'counter'
 
 @description('Timezone for the app (TZ env var)')
 param timezone string = 'Australia/Brisbane'
-
-@description('Raw API key for Logic App → /api/daily (generated via scripts/generate-api-key.ts)')
-@secure()
-param dailyRawKey string
-
-@description('Hashed API key entries for /api/daily (sourceId:sha256:hash, comma-separated)')
-@secure()
-param dailyApiKeys string
 
 @description('Hashed API key entries for /api/mcp (sourceId:sha256:hash, comma-separated; optional)')
 @secure()
@@ -68,7 +60,6 @@ var applicationInsightsName = 'appi-${appName}-${uniqueSuffix}'
 var logAnalyticsWorkspaceName = 'log-${appName}-${uniqueSuffix}'
 var functionAppName = 'func-${appName}-${uniqueSuffix}'
 var hostingPlanName = 'asp-${appName}-${uniqueSuffix}'
-var logicAppName = 'logic-${appName}-daily-${uniqueSuffix}'
 var deploymentContainerName = 'function-deployments'
 
 // Built-in role definition IDs — stored as vars for readability at the
@@ -112,7 +103,6 @@ module functionapp 'modules/functionapp.bicep' = {
     storageAccountName: storage.outputs.name
     deploymentContainerName: deploymentContainerName
     applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
-    dailyApiKeys: dailyApiKeys
     mcpApiKeys: mcpApiKeys
     signalsMode: signalsMode
     siteId: siteId
@@ -127,17 +117,6 @@ module swa 'modules/swa.bicep' = {
   params: {
     staticWebAppName: staticWebAppName
     location: staticWebAppLocation
-    tags: commonTags
-  }
-}
-
-module logicapp 'modules/logicapp.bicep' = {
-  name: 'logicapp-deploy'
-  params: {
-    logicAppName: logicAppName
-    location: location
-    functionAppDefaultHostname: functionapp.outputs.defaultHostname
-    dailyRawKey: dailyRawKey
     tags: commonTags
   }
 }
@@ -193,4 +172,3 @@ output functionAppUrl string = 'https://${functionapp.outputs.defaultHostname}'
 output storageAccountName string = storage.outputs.name
 output storageTableEndpoint string = storage.outputs.tableEndpoint
 output applicationInsightsName string = monitoring.outputs.applicationInsightsName
-output logicAppName string = logicapp.outputs.name

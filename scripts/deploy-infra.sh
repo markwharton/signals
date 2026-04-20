@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Deploy signals infrastructure to Azure.
 #
-# Secrets (DAILY_RAW_KEY, DAILY_API_KEYS, optionally MCP_API_KEYS) are sourced
-# from scripts/.env.${ENVIRONMENT} when present; in CI they come from the
-# workflow's secrets.
+# Optional MCP_API_KEYS is sourced from scripts/.env.${ENVIRONMENT} when
+# present; in CI it comes from the workflow's secrets. No secret is required
+# for a core signals deployment — the daily job runs as a timer trigger,
+# not a Logic App HTTP call, and the only authenticated endpoint
+# (/api/mcp) is provisioned only when MCP_API_KEYS is non-empty.
 #
 # Usage:
 #   pnpm run deploy:infra                 # ENVIRONMENT=prod
@@ -20,24 +22,13 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
-if [[ -z "${DAILY_RAW_KEY:-}" ]]; then
-  echo "ERROR: DAILY_RAW_KEY is not set. Source $ENV_FILE or export it before running." >&2
-  exit 1
-fi
-if [[ -z "${DAILY_API_KEYS:-}" ]]; then
-  echo "ERROR: DAILY_API_KEYS is not set. Source $ENV_FILE or export it before running." >&2
-  exit 1
-fi
-
 az group create -n "$RG" -l australiaeast --query id -o tsv > /dev/null
 
 az deployment group create \
   --resource-group "$RG" \
   --template-file infra/main.bicep \
   --parameters "infra/parameters.${ENVIRONMENT}.json" \
-  --parameters dailyRawKey="$DAILY_RAW_KEY" \
-               dailyApiKeys="$DAILY_API_KEYS" \
-               mcpApiKeys="${MCP_API_KEYS:-}"
+  --parameters mcpApiKeys="${MCP_API_KEYS:-}"
 
 echo
 echo "Infra deployed. Next step:"

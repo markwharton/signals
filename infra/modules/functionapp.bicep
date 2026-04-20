@@ -24,9 +24,6 @@ param maximumInstanceCount int = 40
 param instanceMemoryMB int = 2048
 
 @secure()
-param dailyApiKeys string
-
-@secure()
 param mcpApiKeys string = ''
 
 var storageTableEndpoint = 'https://${storageAccountName}.table.${environment().suffixes.storage}/'
@@ -90,10 +87,6 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'STORAGE_TABLE_ENDPOINT'
           value: storageTableEndpoint
-        }
-        {
-          name: 'DAILY_API_KEYS'
-          value: dailyApiKeys
         }
         {
           name: 'SIGNALS_MODE'
