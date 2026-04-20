@@ -89,7 +89,7 @@ Configure by either:
        endpoint = "https://..."
        api_key = "pk_admin_..."
   3. Pass flags:
-       sig today --endpoint="https://..." --api-key="pk_admin_..."
+       sig day --endpoint="https://..." --api-key="pk_admin_..."
 
 Generate an API key with: pnpm run generate:api-key admin <source-name>
 (run from the signals repo)

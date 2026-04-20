@@ -45,8 +45,10 @@ Flags (any command):
 
 Configuration precedence: flags > env vars > config file.
   SIGNALS_ENDPOINT, SIGNALS_API_KEY env vars.
-  Config file: ` + "`" + `~/.config/sig/config.toml` + "`" + ` (platform-native path via
-  os.UserConfigDir).
+  Config file (platform-native via os.UserConfigDir):
+    macOS:   ~/Library/Application Support/sig/config.toml
+    Linux:   ~/.config/sig/config.toml
+    Windows: %AppData%\sig\config.toml
 `
 
 func main() {
