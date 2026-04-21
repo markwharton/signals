@@ -9,24 +9,73 @@ string written directly to SWA app settings by Bicep at deploy time,
 Logic App for daily rollups. Cost: ~$0-2/month at plankit.com volume —
 $0 SWA, small Logic App consumption, minimal Table Storage transactions.
 
-Revisit the hosting model if EITHER:
+Revisit the hosting model when one of the explicit trigger conditions
+below trips. None has yet, but the accumulation of workarounds is
+worth naming honestly so the next deliberate review has real data to
+work from.
+
+**Explicit trigger conditions (any one is sufficient):**
 
 - A second workshop tool needs a backend. At that point a shared App
-  Service Plan (B1 Linux, ~$15/month) hosting multiple Function Apps may
-  be more economical and eliminates cold starts as a side effect. This is
-  the HeliMods pattern. Requires moving off SWA Managed Functions to Bring
-  Your Own Functions, so not a trivial change.
+  Service Plan (B1 Linux, ~$15/month) hosting multiple Function Apps
+  may be more economical and eliminates cold starts as a side effect.
+  This is the HeliMods pattern. Requires moving off SWA Managed
+  Functions to Bring Your Own Functions, so not a trivial change.
 
 - Measured cold-start event loss exceeds 1% of expected events. SWA
-  Managed Functions have cold starts; sendBeacon may fail to deliver on
-  bouncy pages if the function is cold. We don't currently measure this —
-  would require building "expected vs received" comparison, which is its
-  own project. Don't speculatively optimize.
+  Managed Functions have cold starts; sendBeacon may fail to deliver
+  on bouncy pages if the function is cold. We don't currently measure
+  this — would require building "expected vs received" comparison,
+  which is its own project. Don't speculatively optimize.
 
-Don't pivot to a standalone Function App to solve perceived problems
-with SWA Managed Functions without carefully reviewing the auth story
-— standalone Function Apps don't inherit SWA's auth layer, which
-creates a harder security problem than any operational one it solves.
+**Observed operational friction (accumulating, not yet sufficient):**
+
+- **No native timer trigger.** SWA MF is HTTP-only, so a Logic App
+  stands in as the scheduler for `/api/daily`. Works, but adds a
+  moving part that has its own failure modes (see the 2026-04-20
+  02:22 UTC `Failed` run — a 500 from the SWA middleware layer on
+  cold start, body literally `Backend call failure`).
+
+- **No platform-level App Insights integration.** The SWA platform
+  honors `APPLICATIONINSIGHTS_CONNECTION_STRING` as an app setting
+  (visible to function code) but does not itself forward function
+  telemetry. Tracked upstream at
+  [Azure/static-web-apps#204](https://github.com/Azure/static-web-apps/issues/204);
+  `Microsoft.Web/staticSites@2025-03-01` has no telemetry property,
+  and the Portal's "Enable Application Insights" button just writes
+  the same app setting (plus hidden-link tags for portal cosmetics).
+  **Previously attempted fix:** install the `applicationinsights` npm
+  package and call `useAzureMonitor(...)` at module load. It works,
+  but drags in ~163 transitive OpenTelemetry packages — inflating the
+  API bundle from 116 → 279 packages and pushing the SWA CLI upload
+  past its 5-minute SAS token window, making deploys flaky. Backed
+  out on 2026-04-21. Current state: rely on whatever the Functions
+  host emits on its own (intermittent requests + ctx.log traces
+  observed, no auto-dependency tracking, no custom events).
+  Revisit only when event loss or opaque failures make it worth the
+  deploy-time tax — or when a standalone Function App enters scope
+  and makes the workaround unnecessary.
+
+- **No managed identity path to Storage** (documented in
+  `.claude/rules/architecture-choices.md`). Connection string via app
+  settings works, but MI-based rotation isn't available for v1 on
+  SWA MF.
+
+**Blocker to watch before any pivot — the auth story is the real cost:**
+
+SWA's built-in GitHub auth gates `/`, `/api/*`, and the dashboard
+under the `signals_admin` role. A standalone Function App does NOT
+inherit this — `/api/summary`, `/api/mcp`, and the dashboard all need
+their auth re-solved before the move is a net win. Don't pivot to a
+standalone Function App to solve observability or scheduling
+perceived problems without carefully weighing the auth consequence
+— the security surface area this adds is a harder problem than any
+operational one it would solve.
+
+**Current stance:** stay on SWA MF. No custom telemetry — the
+in-process SDK's bundle cost wasn't worth the partial observability
+it delivered. Keep the Logic App. Wait for a real trigger (second
+tool, measured event loss) to force the question.
 
 ## Budget alert
 
@@ -83,6 +132,47 @@ Common orphans encountered in this project:
   az keyvault purge   --name <kv> --location <region>
   ```
   Skip purge if you want the 90-day recovery window.
+
+## Deploy gotchas
+
+### SAS window vs API bundle size
+
+The SWA CLI (`swa deploy`) uploads build artifacts using a short-lived
+storage SAS token — **valid for 5 minutes**. If the upload takes
+longer than that, you get:
+
+```
+Uploading failed. Error message: Server failed to authenticate the request.
+ErrorCode: AuthenticationFailed
+AuthenticationErrorDetail: Signature not valid in the specified key time frame:
+  Key start [...] Key expiry [...] Current [...]
+Failed to upload build artifacts.
+```
+
+The cause is almost always that the API bundle (`out/api/node_modules`)
+grew past what the network can push in 5 minutes. Mitigations in
+order of preference:
+
+1. **Shrink the bundle.** `pnpm --filter=@signals/functions --prod deploy --legacy ./out/api` already strips devDependencies; the remaining packages are all production. Look for heavy additions to `packages/functions/package.json`. See the applicationinsights note below for a concrete example.
+2. **Retry.** Network variance sometimes gets the same bundle through on a second attempt. Quick but not a fix.
+3. **Use `--deployment-token` with the SWA deploy key** from `az staticwebapp secrets list`. This helps with AAD-session expiry but the upload-layer SAS is still 5 minutes, so it doesn't solve large-bundle cases on its own.
+
+### applicationinsights bloats the API bundle
+
+Do **not** add `applicationinsights` (or `@azure/monitor-opentelemetry`)
+to `@signals/functions` without a plan for bundle size. The `v3.x`
+series is an OpenTelemetry rewrite that pulls in ~163 transitive
+packages — in one 2026-04-21 experiment the API bundle grew from
+116 → 279 packages, blowing past the 5-minute SAS window and making
+deploys unreliable. Backed out.
+
+SWA Managed Functions has no platform-level App Insights integration
+([Azure/static-web-apps#204](https://github.com/Azure/static-web-apps/issues/204)),
+so there's no "small" in-process fix available; any SDK that gives
+real auto-instrumentation will drag the OTel chain along with it.
+If custom telemetry becomes load-bearing, the right answer is
+probably a hosting-model review (see "Revisit the hosting model"),
+not another attempt at bundling heavy SDKs into SWA MF.
 
 ## Verifying the daily rollup
 
