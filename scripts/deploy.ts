@@ -88,7 +88,7 @@ run(
   "swa deploy ./packages/dashboard/dist" +
     " --api-location ./out/api" +
     " --api-language node" +
-    " --api-version 20" +
+    " --api-version 22" +
     ` --app-name "${swaApp}"` +
     " --env production" +
     " --no-use-keychain",
