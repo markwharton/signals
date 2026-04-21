@@ -5,6 +5,7 @@ import type {
 } from "@azure/functions";
 import { app } from "@azure/functions";
 import { validateApiKey } from "../shared/apiKey.js";
+import { getDefaultSite } from "../shared/sites.js";
 import { ALL_DAYS, buildSummary } from "../shared/summaryQuery.js";
 
 /**
@@ -47,9 +48,14 @@ app.http("mcp", {
     req: HttpRequest,
     ctx: InvocationContext,
   ): Promise<HttpResponseInit> => {
-    const site = process.env.SIGNALS_SITE_ID;
-    if (!site) {
-      ctx.error("mcp: SIGNALS_SITE_ID not set");
+    let site: string;
+    try {
+      // Step 2 will accept a `site` tool argument; for now the tool
+      // serves the first allowlisted site so existing callers see no
+      // behavior change on single-site deploys.
+      site = getDefaultSite();
+    } catch (err) {
+      ctx.error(`mcp: ${(err as Error).message}`);
       return jsonRpcError(-32603, "Server not configured");
     }
 

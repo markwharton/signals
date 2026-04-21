@@ -6,7 +6,7 @@
     "location": { "value": "australiaeast" },
     "staticWebAppLocation": { "value": "eastasia" },
     "environment": { "value": "prod" },
-    "siteId": { "value": "plankit.com" },
+    "sites": { "value": "plankit.com" },
     "signalsMode": { "value": "counter" },
     "timezone": { "value": "Australia/Brisbane" }
   }

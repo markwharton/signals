@@ -9,7 +9,7 @@ param location string
 param storageAccountName string
 param applicationInsightsConnectionString string
 param signalsMode string
-param siteId string
+param sites string
 param timezone string
 param tags object = {}
 
@@ -60,7 +60,7 @@ resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2023-01-01' = {
   properties: union({
     STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
     SIGNALS_MODE: signalsMode
-    SIGNALS_SITE_ID: siteId
+    SIGNALS_SITES: sites
     APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsightsConnectionString
     DAILY_API_KEYS: dailyApiKeys
     GITHUB_CLIENT_ID: githubClientId

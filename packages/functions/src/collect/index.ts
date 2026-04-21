@@ -7,6 +7,7 @@ import {
   normalizePath,
 } from "@signals/shared";
 import { checkRateLimit } from "../shared/rateLimit.js";
+import { getAllowedSites, originMatchesSite } from "../shared/sites.js";
 import { TABLE_EVENTS, getTableClient } from "../shared/tables.js";
 
 app.http("collect", {
@@ -32,10 +33,21 @@ app.http("collect", {
         return { status: 400 };
       }
 
-      const expectedSite = process.env.SIGNALS_SITE_ID;
-      if (expectedSite && request.site !== expectedSite) {
+      let allowed: Set<string>;
+      try {
+        allowed = getAllowedSites();
+      } catch (err) {
+        ctx.error(`collect: ${(err as Error).message}`);
+        return { status: 500 };
+      }
+      if (!allowed.has(request.site)) {
+        ctx.warn(`collect: site "${request.site}" not in allowlist`);
+        return { status: 400 };
+      }
+      const origin = req.headers.get("origin");
+      if (!originMatchesSite(origin, request.site)) {
         ctx.warn(
-          `collect: site mismatch (got "${request.site}", expected "${expectedSite}")`,
+          `collect: Origin "${origin}" does not match site "${request.site}"`,
         );
         return { status: 400 };
       }

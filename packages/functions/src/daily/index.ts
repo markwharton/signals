@@ -14,6 +14,7 @@ import {
   rollupPartitionKey,
 } from "@signals/shared";
 import { validateApiKey } from "../shared/apiKey.js";
+import { getAllowedSites } from "../shared/sites.js";
 import { TABLE_EVENTS, TABLE_ROLLUPS, getTableClient } from "../shared/tables.js";
 
 // HTTP-triggered; a Logic App POSTs here at 17:00 UTC daily with an
@@ -128,9 +129,11 @@ app.http("daily", {
       return { status: 401 };
     }
 
-    const site = process.env.SIGNALS_SITE_ID;
-    if (!site) {
-      ctx.error("daily: SIGNALS_SITE_ID not set");
+    let allowed: Set<string>;
+    try {
+      allowed = getAllowedSites();
+    } catch (err) {
+      ctx.error(`daily: ${(err as Error).message}`);
       return { status: 500 };
     }
 
@@ -162,35 +165,46 @@ app.http("daily", {
       endDate = utcDaysAgo(now, 1);
     }
 
+    const sites = [...allowed];
     ctx.log(
-      `daily: source=${sourceId} endDate=${yyyymmdd(endDate)} days=${days}` +
+      `daily: source=${sourceId} sites=[${sites.join(",")}] ` +
+        `endDate=${yyyymmdd(endDate)} days=${days}` +
         (dateParam ? " (manual re-roll)" : ""),
     );
 
     const events = getTableClient(TABLE_EVENTS);
     const rollups = getTableClient(TABLE_ROLLUPS);
 
-    const results: DayResult[] = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const target = new Date(endDate);
-      target.setUTCDate(target.getUTCDate() - i);
-      results.push(await rollupDay(events, rollups, site, target, ctx));
+    const results: Record<string, DayResult[]> = {};
+    for (const site of sites) {
+      results[site] = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const target = new Date(endDate);
+        target.setUTCDate(target.getUTCDate() - i);
+        results[site].push(await rollupDay(events, rollups, site, target, ctx));
+      }
     }
 
     // Cleanup only on the default invocation. Manual re-rolls via
     // ?date=... don't trigger retention GC — the caller is targeting
     // a specific historical window and shouldn't cause surprising
     // raw-event deletions elsewhere.
-    let deleted = 0;
+    const deleted: Record<string, number> = {};
     let cleanupYmd: string | null = null;
     if (!dateParam) {
       const cleanupTarget = utcDaysAgo(now, RAW_RETENTION_DAYS + 1);
       cleanupYmd = yyyymmdd(cleanupTarget);
-      for (let h = 0; h < 24; h++) {
-        const pk = `${site}_${cleanupYmd}_${String(h).padStart(2, "0")}`;
-        deleted += await deletePartition(events, pk);
+      for (const site of sites) {
+        let perSite = 0;
+        for (let h = 0; h < 24; h++) {
+          const pk = `${site}_${cleanupYmd}_${String(h).padStart(2, "0")}`;
+          perSite += await deletePartition(events, pk);
+        }
+        deleted[site] = perSite;
+        ctx.log(
+          `daily: deleted ${perSite} raw event(s) from ${cleanupYmd} for ${site}`,
+        );
       }
-      ctx.log(`daily: deleted ${deleted} raw event(s) from ${cleanupYmd}`);
     }
 
     ctx.log("daily: complete");
@@ -198,7 +212,7 @@ app.http("daily", {
     return {
       status: 200,
       jsonBody: {
-        days: results,
+        sites: results,
         rawDeleted: deleted,
         cleanupDate: cleanupYmd,
       },

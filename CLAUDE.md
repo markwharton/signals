@@ -47,7 +47,7 @@ IMPORTANT: Follow these rules at all times.
 
 - **Never use SWA's Oryx auto-build for Functions.** It doesn't understand pnpm workspaces. Build locally/CI and upload with `swa deploy` pointed at `pnpm deploy --prod` output.
 - **Region split:** `australiaeast` for Storage/KV/Functions/Logic App; `eastasia` for SWA (no AU region available). Platform constraint, not a preference.
-- **Single-tenant:** `SIGNALS_SITE_ID=plankit.com`. Not multi-tenant.
+- **Operator-managed multi-tenant:** `SIGNALS_SITES=plankit.com[,othersite.com,...]` is a comma-separated allowlist enforced server-side at `/api/collect` (set membership + `Origin` suffix-match). Bicep param `sites` controls the deploy; rollups iterate per site. Auth stays single-role (`signals_admin` sees everything).
 - **API keys:** `pk_{scope}_{hex}` raw, stored as `sourceId:sha256:{hex}` comma-separated env entries, compared with `timingSafeEqual`. Scopes: `daily`, `mcp`.
 - **CAF naming:** `st{app}{suffix}` (Storage), `stapp-`, `appi-`, `log-`, `kv-`, `logic-`. Environment lives in the RG name (`rg-signals-{env}`) only.
 

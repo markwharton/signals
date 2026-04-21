@@ -23,8 +23,8 @@ param staticWebAppLocation string = 'eastasia'
 @allowed(['prod', 'dev', 'test'])
 param environment string = 'prod'
 
-@description('Site this deployment tracks (used in partition keys)')
-param siteId string = 'plankit.com'
+@description('Comma-separated allowlist of sites this deployment tracks (operator-managed multi-tenant). Used in partition keys and enforced at /api/collect.')
+param sites string = 'plankit.com'
 
 @description('Mode: counter (v1) or signal (future)')
 @allowed(['counter', 'signal'])
@@ -108,7 +108,7 @@ module swa 'modules/swa.bicep' = {
     storageAccountName: storage.outputs.name
     applicationInsightsConnectionString: monitoring.outputs.applicationInsightsConnectionString
     signalsMode: signalsMode
-    siteId: siteId
+    sites: sites
     timezone: timezone
     dailyApiKeys: dailyApiKeys
     mcpApiKeys: mcpApiKeys

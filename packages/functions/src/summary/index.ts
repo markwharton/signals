@@ -5,6 +5,7 @@ import type {
 } from "@azure/functions";
 import { app } from "@azure/functions";
 import { authenticateAdmin, describeAuth } from "../shared/auth.js";
+import { getDefaultSite } from "../shared/sites.js";
 import { buildSummary, parseDays } from "../shared/summaryQuery.js";
 
 app.http("summary", {
@@ -20,9 +21,14 @@ app.http("summary", {
       return { status: 401 };
     }
 
-    const site = process.env.SIGNALS_SITE_ID;
-    if (!site) {
-      ctx.error("summary: SIGNALS_SITE_ID not set");
+    let site: string;
+    try {
+      // Step 2 will accept ?site= and validate against the allowlist;
+      // for now the summary handler reads the first allowlisted site,
+      // which preserves single-site behavior verbatim.
+      site = getDefaultSite();
+    } catch (err) {
+      ctx.error(`summary: ${(err as Error).message}`);
       return { status: 500 };
     }
 
