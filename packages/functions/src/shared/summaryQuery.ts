@@ -2,6 +2,7 @@ import type { SummaryCounters, SummaryResponse } from "@signals/shared";
 import {
   DIRECT_SENTINEL,
   decodePathRowKey,
+  rollupMonthlyPartitionKey,
   rollupPartitionKey,
 } from "@signals/shared";
 import { runWithConcurrency } from "./concurrency.js";
@@ -19,12 +20,139 @@ export const ALL_DAYS = 365;
 // host. Raise only if profiling shows queries queuing at the client.
 const READ_CONCURRENCY = 20;
 
-type Dimension = "path" | "referrer" | "device";
+type DailyDimension = "path" | "referrer" | "device";
+type MonthlyDimension = "referrer" | "device";
 
-interface DayDimResult {
+/**
+ * The sparkline needs per-day granularity (the dashboard chart plots one
+ * point per day), so the path dimension is always read from the daily tier
+ * — that gives us `dayTotals` for free. Referrer and device rarely need
+ * per-day resolution, so full calendar months within the window are served
+ * from the monthly tier, and only the edge days (outside any full month)
+ * fall back to daily reads.
+ */
+interface DailyRead {
   dayIndex: number;
-  dim: Dimension;
+  dim: DailyDimension;
   rows: Array<{ rowKey: string | undefined } & SummaryCounters>;
+}
+
+interface MonthlyRead {
+  dim: MonthlyDimension;
+  rows: Array<{ rowKey: string | undefined } & SummaryCounters>;
+}
+
+interface WindowSplit {
+  /** Day indices into dayList that must be read from the daily tier for
+   * referrer+device (the path dim always reads all dayList entries). */
+  tailDayIndices: number[];
+  /** First-of-month UTC dates for full months inside the window. */
+  fullMonthStarts: Date[];
+}
+
+/**
+ * Split `dayList` into (a) whole calendar months fully contained in the
+ * window and (b) the edge days that flank them. Used to route
+ * referrer/device reads through the monthly tier when we can, and fall
+ * back to daily for the partial months at each end.
+ */
+function splitWindow(dayList: Date[]): WindowSplit {
+  if (dayList.length === 0) {
+    return { tailDayIndices: [], fullMonthStarts: [] };
+  }
+  const start = dayList[0];
+  const end = dayList[dayList.length - 1];
+
+  // First day of the first full month: the first-of-month on/after start.
+  let firstFullMonth = new Date(
+    Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1),
+  );
+  if (start.getUTCDate() !== 1) {
+    firstFullMonth = new Date(
+      Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1),
+    );
+  }
+
+  // Last day of the last full month: the last-of-month on/before end.
+  const endMonthLast = new Date(
+    Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0),
+  );
+  let lastFullMonthEnd: Date;
+  if (end.getTime() === endMonthLast.getTime()) {
+    lastFullMonthEnd = endMonthLast;
+  } else {
+    // Last day of the previous month.
+    lastFullMonthEnd = new Date(
+      Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 0),
+    );
+  }
+
+  const fullMonthStarts: Date[] = [];
+  if (firstFullMonth.getTime() <= lastFullMonthEnd.getTime()) {
+    for (
+      let m = new Date(firstFullMonth);
+      m.getTime() <= lastFullMonthEnd.getTime();
+      m = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 1))
+    ) {
+      fullMonthStarts.push(new Date(m));
+    }
+  }
+
+  const tailDayIndices: number[] = [];
+  for (let i = 0; i < dayList.length; i++) {
+    const d = dayList[i];
+    const inFullMonths =
+      fullMonthStarts.length > 0 &&
+      d.getTime() >= firstFullMonth.getTime() &&
+      d.getTime() <= lastFullMonthEnd.getTime();
+    if (!inFullMonths) tailDayIndices.push(i);
+  }
+
+  return { tailDayIndices, fullMonthStarts };
+}
+
+async function readPartition(
+  rollups: ReturnType<typeof getTableClient>,
+  partitionKey: string,
+): Promise<Array<{ rowKey: string | undefined } & SummaryCounters>> {
+  const out: Array<{ rowKey: string | undefined } & SummaryCounters> = [];
+  for await (const row of rollups.listEntities<SummaryCounters>({
+    queryOptions: { filter: `PartitionKey eq '${partitionKey}'` },
+  })) {
+    out.push({
+      rowKey: row.rowKey,
+      pageviews: row.pageviews ?? 0,
+      notFounds: row.notFounds ?? 0,
+      botPageviews: row.botPageviews ?? 0,
+      botNotFounds: row.botNotFounds ?? 0,
+    });
+  }
+  return out;
+}
+
+function addReferrer(
+  totals: Map<string, SummaryCounters>,
+  row: { rowKey: string | undefined } & SummaryCounters,
+): void {
+  const host = row.rowKey ?? DIRECT_SENTINEL;
+  const entry = totals.get(host) ?? newCounters();
+  addCounters(entry, row);
+  totals.set(host, entry);
+}
+
+function addDevice(
+  device: { mobile: number; desktop: number; botMobile: number; botDesktop: number },
+  row: { rowKey: string | undefined } & SummaryCounters,
+): void {
+  const traffic = row.pageviews + row.notFounds;
+  const botTraffic = row.botPageviews + row.botNotFounds;
+  if (row.rowKey === "mobile") {
+    device.mobile += traffic;
+    device.botMobile += botTraffic;
+  } else if (row.rowKey === "desktop") {
+    device.desktop += traffic;
+    device.botDesktop += botTraffic;
+  }
 }
 
 function newCounters(): SummaryCounters {
@@ -82,72 +210,100 @@ export async function buildSummary(
     dayList.push(new Date(d));
   }
 
-  // Build the fan-out: one task per (day, dimension). Run with a bounded
-  // pool so long windows don't open 1000+ concurrent sockets.
-  const dims: Dimension[] = ["path", "referrer", "device"];
-  const tasks: Array<() => Promise<DayDimResult>> = [];
+  const split = splitWindow(dayList);
+
+  // Daily reads: the full path dim (every day, needed for sparkline), plus
+  // referrer + device for tail days outside any full calendar month.
+  const dailyTasks: Array<() => Promise<DailyRead>> = [];
   for (let i = 0; i < dayList.length; i++) {
     const d = dayList[i];
-    for (const dim of dims) {
+    const pk = rollupPartitionKey(site, d, "path");
+    dailyTasks.push(async () => ({
+      dayIndex: i,
+      dim: "path",
+      rows: await readPartition(rollups, pk),
+    }));
+  }
+  for (const i of split.tailDayIndices) {
+    const d = dayList[i];
+    for (const dim of ["referrer", "device"] as const) {
       const pk = rollupPartitionKey(site, d, dim);
-      tasks.push(async () => {
-        const rows: Array<{ rowKey: string | undefined } & SummaryCounters> = [];
-        for await (const row of rollups.listEntities<SummaryCounters>({
-          queryOptions: { filter: `PartitionKey eq '${pk}'` },
-        })) {
-          rows.push({
-            rowKey: row.rowKey,
-            pageviews: row.pageviews ?? 0,
-            notFounds: row.notFounds ?? 0,
-            botPageviews: row.botPageviews ?? 0,
-            botNotFounds: row.botNotFounds ?? 0,
-          });
-        }
-        return { dayIndex: i, dim, rows };
-      });
+      dailyTasks.push(async () => ({
+        dayIndex: i,
+        dim,
+        rows: await readPartition(rollups, pk),
+      }));
     }
   }
 
-  const results = await runWithConcurrency(tasks, READ_CONCURRENCY);
+  // Monthly reads: referrer + device for each full calendar month inside
+  // the window. The monthly writer keeps these in sync with the dailies.
+  const monthlyTasks: Array<() => Promise<MonthlyRead>> = [];
+  for (const m of split.fullMonthStarts) {
+    for (const dim of ["referrer", "device"] as const) {
+      const pk = rollupMonthlyPartitionKey(site, m, dim);
+      monthlyTasks.push(async () => ({
+        dim,
+        rows: await readPartition(rollups, pk),
+      }));
+    }
+  }
+
+  // Route both sets through a single concurrency pool so the in-flight
+  // cap applies across tiers, not independently per tier.
+  type MixedRead =
+    | { kind: "daily"; r: DailyRead }
+    | { kind: "monthly"; r: MonthlyRead };
+  const mixed: Array<() => Promise<MixedRead>> = [
+    ...dailyTasks.map(
+      (t) => async (): Promise<MixedRead> => ({ kind: "daily", r: await t() }),
+    ),
+    ...monthlyTasks.map(
+      (t) => async (): Promise<MixedRead> => ({
+        kind: "monthly",
+        r: await t(),
+      }),
+    ),
+  ];
+  const results = await runWithConcurrency(mixed, READ_CONCURRENCY);
 
   const totals = newCounters();
   const pathTotals = new Map<string, SummaryCounters>();
   const referrerTotals = new Map<string, SummaryCounters>();
   const device = { mobile: 0, desktop: 0, botMobile: 0, botDesktop: 0 };
 
-  // Per-day totals rebuilt from the path dimension (same as pre-parallel code
-  // which derived dayTotals from path rows). Indexed by dayList position so
-  // the sparkline stays in calendar order regardless of completion order.
+  // Per-day totals rebuilt from the path dimension. Indexed by dayList
+  // position so the sparkline stays in calendar order regardless of
+  // completion order.
   const dayTotals: SummaryCounters[] = dayList.map(() => newCounters());
 
   for (const res of results) {
-    if (res.dim === "path") {
-      for (const row of res.rows) {
-        if (!row.rowKey) continue;
-        const path = decodePathRowKey(row.rowKey);
-        const entry = pathTotals.get(path) ?? newCounters();
-        addCounters(entry, row);
-        pathTotals.set(path, entry);
-        addCounters(dayTotals[res.dayIndex], row);
-      }
-    } else if (res.dim === "referrer") {
-      for (const row of res.rows) {
-        const host = row.rowKey ?? DIRECT_SENTINEL;
-        const entry = referrerTotals.get(host) ?? newCounters();
-        addCounters(entry, row);
-        referrerTotals.set(host, entry);
+    if (res.kind === "daily") {
+      const { dim, rows, dayIndex } = res.r;
+      if (dim === "path") {
+        for (const row of rows) {
+          if (!row.rowKey) continue;
+          const path = decodePathRowKey(row.rowKey);
+          const entry = pathTotals.get(path) ?? newCounters();
+          addCounters(entry, row);
+          pathTotals.set(path, entry);
+          addCounters(dayTotals[dayIndex], row);
+        }
+      } else if (dim === "referrer") {
+        for (const row of rows) {
+          addReferrer(referrerTotals, row);
+        }
+      } else {
+        for (const row of rows) {
+          addDevice(device, row);
+        }
       }
     } else {
-      for (const row of res.rows) {
-        const traffic = row.pageviews + row.notFounds;
-        const botTraffic = row.botPageviews + row.botNotFounds;
-        if (row.rowKey === "mobile") {
-          device.mobile += traffic;
-          device.botMobile += botTraffic;
-        } else if (row.rowKey === "desktop") {
-          device.desktop += traffic;
-          device.botDesktop += botTraffic;
-        }
+      const { dim, rows } = res.r;
+      if (dim === "referrer") {
+        for (const row of rows) addReferrer(referrerTotals, row);
+      } else {
+        for (const row of rows) addDevice(device, row);
       }
     }
   }

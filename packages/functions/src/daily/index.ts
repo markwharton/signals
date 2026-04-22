@@ -5,15 +5,17 @@ import type {
   InvocationContext,
 } from "@azure/functions";
 import { app } from "@azure/functions";
-import type { RollupDimension } from "@signals/shared";
+import type { MonthlyRollupDimension, RollupDimension } from "@signals/shared";
 import {
   deviceRowKey,
   pathRowKey,
   pathxReferrerRowKey,
   referrerRowKey,
+  rollupMonthlyPartitionKey,
   rollupPartitionKey,
 } from "@signals/shared";
 import { validateApiKey } from "../shared/apiKey.js";
+import { runWithConcurrency } from "../shared/concurrency.js";
 import { getAllowedSites } from "../shared/sites.js";
 import { TABLE_EVENTS, TABLE_ROLLUPS, getTableClient } from "../shared/tables.js";
 
@@ -39,6 +41,12 @@ import { TABLE_EVENTS, TABLE_ROLLUPS, getTableClient } from "../shared/tables.js
 const RAW_RETENTION_DAYS = 30;
 
 const MAX_DAYS = 30;
+
+// Cap in-flight reads during monthly rebuild. 3 dims × up to 31 days = 93
+// partition queries; 20 in flight is the same budget the summary reader uses.
+const MONTHLY_REBUILD_CONCURRENCY = 20;
+
+const MONTHLY_DIMS: MonthlyRollupDimension[] = ["path", "referrer", "device"];
 
 interface Counts {
   pageviews: number;
@@ -178,10 +186,28 @@ app.http("daily", {
     const results: Record<string, DayResult[]> = {};
     for (const site of sites) {
       results[site] = [];
+      // yyyymm → one representative date (1st of that month) so the rebuild
+      // knows which month to rebuild. Using a Map dedupes re-rolls that all
+      // land in the same month down to one rebuild per month per site.
+      const affectedMonths = new Map<string, Date>();
       for (let i = days - 1; i >= 0; i--) {
         const target = new Date(endDate);
         target.setUTCDate(target.getUTCDate() - i);
-        results[site].push(await rollupDay(events, rollups, site, target, ctx));
+        const res = await rollupDay(events, rollups, site, target, ctx);
+        results[site].push(res);
+        // Skipped days still flag the month — a re-roll of a past day
+        // with no raw events can still warrant a monthly rebuild if
+        // something upstream changed. (Cheap: 93 reads, idempotent.)
+        const monthKey = `${target.getUTCFullYear()}${String(target.getUTCMonth() + 1).padStart(2, "0")}`;
+        if (!affectedMonths.has(monthKey)) {
+          affectedMonths.set(
+            monthKey,
+            new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), 1)),
+          );
+        }
+      }
+      for (const month of affectedMonths.values()) {
+        await rebuildMonthlyTier(rollups, site, month, ctx);
       }
     }
 
@@ -345,4 +371,135 @@ async function deletePartition(
     }
   }
   return count;
+}
+
+/**
+ * Rebuild the three monthly partitions (path, referrer, device) for the UTC
+ * month containing `target`. The rebuild reads every daily partition for
+ * days 1..last-of-month of that month, re-accumulates counters, upserts the
+ * monthly rows, and deletes monthly row keys that no longer appear in the
+ * dailies (a path that 404'd on day 3 and then got fixed shouldn't linger).
+ *
+ * Idempotent and state-free: a re-rolled day correctly propagates, since
+ * the whole month is rederived from the daily source of truth each time.
+ * Cost is ~93 partition reads plus O(unique-row-keys) writes per invocation
+ * — bounded and cheap at signals' volume.
+ */
+async function rebuildMonthlyTier(
+  rollups: TableClient,
+  site: string,
+  target: Date,
+  ctx: InvocationContext,
+): Promise<void> {
+  const year = target.getUTCFullYear();
+  const monthIdx = target.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, monthIdx + 1, 0)).getUTCDate();
+  const monthDates: Date[] = [];
+  for (let d = 1; d <= lastDay; d++) {
+    monthDates.push(new Date(Date.UTC(year, monthIdx, d)));
+  }
+
+  // Fan out: every (day, dim) → daily partition rows.
+  interface ReadRow {
+    dim: MonthlyRollupDimension;
+    rowKey: string;
+    counts: Counts;
+  }
+  const readTasks: Array<() => Promise<ReadRow[]>> = [];
+  for (const d of monthDates) {
+    for (const dim of MONTHLY_DIMS) {
+      const pk = rollupPartitionKey(site, d, dim);
+      readTasks.push(async () => {
+        const rows: ReadRow[] = [];
+        for await (const row of rollups.listEntities<{
+          pageviews?: number;
+          notFounds?: number;
+          botPageviews?: number;
+          botNotFounds?: number;
+        }>({ queryOptions: { filter: `PartitionKey eq '${pk}'` } })) {
+          if (!row.rowKey) continue;
+          rows.push({
+            dim,
+            rowKey: row.rowKey,
+            counts: {
+              pageviews: row.pageviews ?? 0,
+              notFounds: row.notFounds ?? 0,
+              botPageviews: row.botPageviews ?? 0,
+              botNotFounds: row.botNotFounds ?? 0,
+            },
+          });
+        }
+        return rows;
+      });
+    }
+  }
+
+  const dailyBatches = await runWithConcurrency(
+    readTasks,
+    MONTHLY_REBUILD_CONCURRENCY,
+  );
+
+  const perDim: Record<MonthlyRollupDimension, Map<string, Counts>> = {
+    path: new Map(),
+    referrer: new Map(),
+    device: new Map(),
+  };
+  for (const batch of dailyBatches) {
+    for (const r of batch) {
+      const map = perDim[r.dim];
+      let c = map.get(r.rowKey);
+      if (!c) {
+        c = newCounts();
+        map.set(r.rowKey, c);
+      }
+      c.pageviews += r.counts.pageviews;
+      c.notFounds += r.counts.notFounds;
+      c.botPageviews += r.counts.botPageviews;
+      c.botNotFounds += r.counts.botNotFounds;
+    }
+  }
+
+  // For each dim, read current monthly row keys (for orphan detection),
+  // upsert the recomputed rows, delete orphans. Reads are parallel across
+  // dims; writes per dim run through the same concurrency pool.
+  for (const dim of MONTHLY_DIMS) {
+    const mpk = rollupMonthlyPartitionKey(site, target, dim);
+    const before = new Set<string>();
+    for await (const row of rollups.listEntities<{ partitionKey?: string }>({
+      queryOptions: { filter: `PartitionKey eq '${mpk}'` },
+    })) {
+      if (row.rowKey) before.add(row.rowKey);
+    }
+
+    const after = perDim[dim];
+    const writeTasks: Array<() => Promise<void>> = [];
+    for (const [rowKey, counts] of after) {
+      writeTasks.push(async () => {
+        await rollups.upsertEntity(
+          {
+            partitionKey: mpk,
+            rowKey,
+            pageviews: counts.pageviews,
+            notFounds: counts.notFounds,
+            botPageviews: counts.botPageviews,
+            botNotFounds: counts.botNotFounds,
+          },
+          "Replace",
+        );
+      });
+    }
+    for (const rowKey of before) {
+      if (!after.has(rowKey)) {
+        writeTasks.push(async () => {
+          await rollups.deleteEntity(mpk, rowKey);
+        });
+      }
+    }
+    await runWithConcurrency(writeTasks, MONTHLY_REBUILD_CONCURRENCY);
+
+    const orphans = Array.from(before).filter((k) => !after.has(k)).length;
+    ctx.log(
+      `daily: monthly ${mpk} rebuilt — ${after.size} row(s), ${orphans} orphan(s) purged`,
+    );
+  }
 }

@@ -54,6 +54,29 @@ export function rollupPartitionKey(
   return `${site}_${y}${m}${d}_${dimension}`;
 }
 
+/**
+ * Monthly rollup dimensions. pathxreferrer is intentionally omitted — it's
+ * a drill-down fixture and the summary reader doesn't consume it, so the
+ * monthly writer has nothing to serve.
+ */
+export type MonthlyRollupDimension = "path" | "referrer" | "device";
+
+/**
+ * Build a monthly rollup partition key. The `_m` suffix keeps monthly rows
+ * in the same `rollups` table but in a distinct partition namespace from
+ * their daily siblings — so a reader that wants "July 2026 paths" hits one
+ * partition instead of 31.
+ */
+export function rollupMonthlyPartitionKey(
+  site: string,
+  date: Date,
+  dimension: MonthlyRollupDimension,
+): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${site}_${y}${m}_${dimension}_m`;
+}
+
 /** URL-encode the path so it can live in a row key (paths contain `/`). */
 export function pathRowKey(path: string): string {
   return encodeURIComponent(path);
