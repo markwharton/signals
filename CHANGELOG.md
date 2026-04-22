@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.6.0] - 2026-04-22
+
+### Added
+
+- operator-managed multi-tenant via SIGNALS_SITES allowlist (f94cfd8)
+- add monthly rollup tier for long summary windows (60f8eb8)
+
+### Fixed
+
+- abort in-flight summary fetch on timespan change (ba9460b)
+
+### Changed
+
+- parallelize summary read path (2b7d0d1)
+
+### Documentation
+
+- hosting-review update + SAS-window deploy trap (1f2a012)
+- update architecture-choices to reflect reverted Flex Consumption pivot (2bbbdca)
+
+### Maintenance
+
+- bump SWA Managed Functions runtime Node 20 → 22 (1626beb)
+- regenerate pk-managed files for v0.13.0 (36e1373)
+
 ## [v0.5.0] - 2026-04-21
 
 ### Added
@@ -120,3 +145,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.3.0]: https://github.com/markwharton/signals/compare/v0.2.0...v0.3.0
 [v0.4.0]: https://github.com/markwharton/signals/compare/v0.3.0...v0.4.0
 [v0.5.0]: https://github.com/markwharton/signals/compare/v0.4.0...v0.5.0
+[v0.6.0]: https://github.com/markwharton/signals/compare/v0.5.0...v0.6.0
