@@ -4,6 +4,7 @@ import {
   decodePathRowKey,
   rollupPartitionKey,
 } from "@signals/shared";
+import { runWithConcurrency } from "./concurrency.js";
 import { TABLE_ROLLUPS, getTableClient } from "./tables.js";
 
 const TOP_N = 5;
@@ -11,6 +12,20 @@ const TOP_N = 5;
 // "all" caps at a year back; if the site has been running longer a future
 // migration can raise this or track the earliest-seen day in table state.
 export const ALL_DAYS = 365;
+
+// Cap in-flight partition reads. At days=365 this loop dispatches ~1095
+// tiny queries; serial would be ~45s at measured ~150-200ms/query. 20 is
+// comfortably under SDK socket defaults and leaves headroom for the Function
+// host. Raise only if profiling shows queries queuing at the client.
+const READ_CONCURRENCY = 20;
+
+type Dimension = "path" | "referrer" | "device";
+
+interface DayDimResult {
+  dayIndex: number;
+  dim: Dimension;
+  rows: Array<{ rowKey: string | undefined } & SummaryCounters>;
+}
 
 function newCounters(): SummaryCounters {
   return { pageviews: 0, notFounds: 0, botPageviews: 0, botNotFounds: 0 };
@@ -62,55 +77,85 @@ export async function buildSummary(
 
   const rollups = getTableClient(TABLE_ROLLUPS);
 
+  const dayList: Date[] = [];
+  for (let d = new Date(startDate); d <= endDate; d = nextUtcDay(d)) {
+    dayList.push(new Date(d));
+  }
+
+  // Build the fan-out: one task per (day, dimension). Run with a bounded
+  // pool so long windows don't open 1000+ concurrent sockets.
+  const dims: Dimension[] = ["path", "referrer", "device"];
+  const tasks: Array<() => Promise<DayDimResult>> = [];
+  for (let i = 0; i < dayList.length; i++) {
+    const d = dayList[i];
+    for (const dim of dims) {
+      const pk = rollupPartitionKey(site, d, dim);
+      tasks.push(async () => {
+        const rows: Array<{ rowKey: string | undefined } & SummaryCounters> = [];
+        for await (const row of rollups.listEntities<SummaryCounters>({
+          queryOptions: { filter: `PartitionKey eq '${pk}'` },
+        })) {
+          rows.push({
+            rowKey: row.rowKey,
+            pageviews: row.pageviews ?? 0,
+            notFounds: row.notFounds ?? 0,
+            botPageviews: row.botPageviews ?? 0,
+            botNotFounds: row.botNotFounds ?? 0,
+          });
+        }
+        return { dayIndex: i, dim, rows };
+      });
+    }
+  }
+
+  const results = await runWithConcurrency(tasks, READ_CONCURRENCY);
+
   const totals = newCounters();
-  const sparkline: Array<{ date: string } & SummaryCounters> = [];
   const pathTotals = new Map<string, SummaryCounters>();
   const referrerTotals = new Map<string, SummaryCounters>();
   const device = { mobile: 0, desktop: 0, botMobile: 0, botDesktop: 0 };
 
-  for (let d = new Date(startDate); d <= endDate; d = nextUtcDay(d)) {
-    const dayTotals = newCounters();
+  // Per-day totals rebuilt from the path dimension (same as pre-parallel code
+  // which derived dayTotals from path rows). Indexed by dayList position so
+  // the sparkline stays in calendar order regardless of completion order.
+  const dayTotals: SummaryCounters[] = dayList.map(() => newCounters());
 
-    const pathPk = rollupPartitionKey(site, d, "path");
-    for await (const row of rollups.listEntities<SummaryCounters>({
-      queryOptions: { filter: `PartitionKey eq '${pathPk}'` },
-    })) {
-      if (!row.rowKey) continue;
-      const path = decodePathRowKey(row.rowKey);
-      const entry = pathTotals.get(path) ?? newCounters();
-      addCounters(entry, row);
-      pathTotals.set(path, entry);
-      addCounters(dayTotals, row);
-    }
-
-    const refPk = rollupPartitionKey(site, d, "referrer");
-    for await (const row of rollups.listEntities<SummaryCounters>({
-      queryOptions: { filter: `PartitionKey eq '${refPk}'` },
-    })) {
-      const host = row.rowKey ?? DIRECT_SENTINEL;
-      const entry = referrerTotals.get(host) ?? newCounters();
-      addCounters(entry, row);
-      referrerTotals.set(host, entry);
-    }
-
-    const devPk = rollupPartitionKey(site, d, "device");
-    for await (const row of rollups.listEntities<SummaryCounters>({
-      queryOptions: { filter: `PartitionKey eq '${devPk}'` },
-    })) {
-      const traffic = (row.pageviews ?? 0) + (row.notFounds ?? 0);
-      const botTraffic = (row.botPageviews ?? 0) + (row.botNotFounds ?? 0);
-      if (row.rowKey === "mobile") {
-        device.mobile += traffic;
-        device.botMobile += botTraffic;
-      } else if (row.rowKey === "desktop") {
-        device.desktop += traffic;
-        device.botDesktop += botTraffic;
+  for (const res of results) {
+    if (res.dim === "path") {
+      for (const row of res.rows) {
+        if (!row.rowKey) continue;
+        const path = decodePathRowKey(row.rowKey);
+        const entry = pathTotals.get(path) ?? newCounters();
+        addCounters(entry, row);
+        pathTotals.set(path, entry);
+        addCounters(dayTotals[res.dayIndex], row);
+      }
+    } else if (res.dim === "referrer") {
+      for (const row of res.rows) {
+        const host = row.rowKey ?? DIRECT_SENTINEL;
+        const entry = referrerTotals.get(host) ?? newCounters();
+        addCounters(entry, row);
+        referrerTotals.set(host, entry);
+      }
+    } else {
+      for (const row of res.rows) {
+        const traffic = row.pageviews + row.notFounds;
+        const botTraffic = row.botPageviews + row.botNotFounds;
+        if (row.rowKey === "mobile") {
+          device.mobile += traffic;
+          device.botMobile += botTraffic;
+        } else if (row.rowKey === "desktop") {
+          device.desktop += traffic;
+          device.botDesktop += botTraffic;
+        }
       }
     }
-
-    addCounters(totals, dayTotals);
-    sparkline.push({ date: isoDate(d), ...dayTotals });
   }
+
+  const sparkline: Array<{ date: string } & SummaryCounters> = dayList.map(
+    (d, i) => ({ date: isoDate(d), ...dayTotals[i] }),
+  );
+  for (const dt of dayTotals) addCounters(totals, dt);
 
   const pathEntries = Array.from(pathTotals.entries(), ([path, c]) => ({
     path,
