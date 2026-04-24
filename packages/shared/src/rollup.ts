@@ -21,7 +21,8 @@ export type RollupDimension =
   | "path"
   | "referrer"
   | "device"
-  | "pathxreferrer";
+  | "pathxreferrer"
+  | "country";
 
 /**
  * Literal used in place of a null `referrerHost` — readable in the portal,
@@ -32,7 +33,20 @@ export type RollupDimension =
  */
 export const DIRECT_SENTINEL = "(direct)";
 
-/** The stored rollup shape — kind × bot counts on every row. */
+/**
+ * Literal used in place of a null country on the `country` rollup
+ * dimension. Rows with `(unknown)` cover traffic where the GeoLite2
+ * lookup missed — private IPs, unmapped ranges, or counter-mode deploys
+ * where the column was never populated.
+ */
+export const UNKNOWN_COUNTRY_SENTINEL = "(unknown)";
+
+/**
+ * The stored rollup shape — kind × bot counts on every row. Signal-mode
+ * deploys additionally populate `visitors`, `sessions`, and `bounces` on
+ * the `device` and `country` dimensions; counter-mode deploys leave
+ * those three fields unset and the reader defaults them to zero.
+ */
 export interface RollupRow {
   partitionKey: string;
   rowKey: string;
@@ -40,6 +54,9 @@ export interface RollupRow {
   notFounds: number;
   botPageviews: number;
   botNotFounds: number;
+  visitors?: number;
+  sessions?: number;
+  bounces?: number;
 }
 
 /** Build a rollup partition key. UTC. */
@@ -57,9 +74,15 @@ export function rollupPartitionKey(
 /**
  * Monthly rollup dimensions. pathxreferrer is intentionally omitted — it's
  * a drill-down fixture and the summary reader doesn't consume it, so the
- * monthly writer has nothing to serve.
+ * monthly writer has nothing to serve. `country` lands here so the reader
+ * can route the same "full months from monthly, tails from daily" split
+ * for country breakdowns as it does for referrer and device.
  */
-export type MonthlyRollupDimension = "path" | "referrer" | "device";
+export type MonthlyRollupDimension =
+  | "path"
+  | "referrer"
+  | "device"
+  | "country";
 
 /**
  * Build a monthly rollup partition key. The `_m` suffix keeps monthly rows
@@ -95,6 +118,12 @@ export function referrerRowKey(referrerHost: string | null): string {
 /** Canonical device label. */
 export function deviceRowKey(isMobile: boolean): string {
   return isMobile ? "mobile" : "desktop";
+}
+
+/** Canonical rowKey for the country dimension — ISO alpha-2 or the
+ *  `(unknown)` sentinel when the GeoLite2 lookup missed. */
+export function countryRowKey(country: string | null | undefined): string {
+  return country ?? UNKNOWN_COUNTRY_SENTINEL;
 }
 
 /**

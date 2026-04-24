@@ -2,7 +2,14 @@
  * Shape returned by GET /api/summary. Consumed by the dashboard; bot
  * counts ride on every tile so the client-side "show bots" toggle
  * changes only what the UI renders, not what the server fetches. Every
- * counter row carries the same four fields for symmetry across tiles.
+ * counter row carries the same four core fields for symmetry across
+ * tiles.
+ *
+ * Signal-mode deploys additionally populate `visitors`, `sessions`, and
+ * `bounces` on `totals`, `sparkline` entries, and the new `countries`
+ * array. Counter-mode deploys leave those three fields undefined; the
+ * dashboard gates the new tiles on `totals.sessions > 0` so counter
+ * deploys render the same layout they did before signal mode existed.
  */
 
 export interface SummaryCounters {
@@ -10,6 +17,9 @@ export interface SummaryCounters {
   notFounds: number;
   botPageviews: number;
   botNotFounds: number;
+  visitors?: number;
+  sessions?: number;
+  bounces?: number;
 }
 
 export interface SummaryResponse {
@@ -38,4 +48,8 @@ export interface SummaryResponse {
     botMobile: number;
     botDesktop: number;
   };
+  /** Signal-mode only. Top countries in the window by pageview count,
+   *  each carrying the full counter set. Absent on counter-mode deploys
+   *  where the `country` rollup rows are empty. */
+  topCountries?: Array<{ country: string } & SummaryCounters>;
 }

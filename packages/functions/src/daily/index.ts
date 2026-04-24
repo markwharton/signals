@@ -7,6 +7,7 @@ import type {
 import { app } from "@azure/functions";
 import type { MonthlyRollupDimension, RollupDimension } from "@signals/shared";
 import {
+  countryRowKey,
   deviceRowKey,
   pathRowKey,
   pathxReferrerRowKey,
@@ -17,7 +18,12 @@ import {
 import { validateApiKey } from "../shared/apiKey.js";
 import { runWithConcurrency } from "../shared/concurrency.js";
 import { getAllowedSites } from "../shared/sites.js";
-import { TABLE_EVENTS, TABLE_ROLLUPS, getTableClient } from "../shared/tables.js";
+import {
+  TABLE_EVENTS,
+  TABLE_ROLLUPS,
+  TABLE_SALTS,
+  getTableClient,
+} from "../shared/tables.js";
 
 // HTTP-triggered; a Logic App POSTs here at 17:00 UTC daily with an
 // x-api-key header validated against DAILY_API_KEYS. SWA Managed
@@ -46,14 +52,39 @@ const MAX_DAYS = 30;
 // partition queries; 20 in flight is the same budget the summary reader uses.
 const MONTHLY_REBUILD_CONCURRENCY = 20;
 
-const MONTHLY_DIMS: MonthlyRollupDimension[] = ["path", "referrer", "device"];
+const MONTHLY_DIMS: MonthlyRollupDimension[] = [
+  "path",
+  "referrer",
+  "device",
+  "country",
+];
+
+/**
+ * Sessions split on gaps wider than this. 30 minutes is the
+ * near-universal convention (GA, Plausible, Fathom). Short enough that
+ * "came back after lunch" counts as a new session, long enough that
+ * "went to make coffee" doesn't.
+ */
+const SESSION_GAP_MS = 30 * 60 * 1000;
 
 interface Counts {
   pageviews: number;
   notFounds: number;
   botPageviews: number;
   botNotFounds: number;
+  // Signal-mode derived counters — set post-scan from the (visitor, ts)
+  // tuples collected during the hour-by-hour read. Undefined on
+  // counter-mode deploys because there's no visitorHash to track.
+  visitors?: number;
+  sessions?: number;
+  bounces?: number;
 }
+
+/** visitor hash → timestamps seen today for that visitor (unsorted). */
+type VisitorTimestamps = Map<string, number[]>;
+
+/** dimension row key → per-visitor timestamp timeline. */
+type DimVisitors = Map<string, VisitorTimestamps>;
 
 interface DayResult {
   date: string;
@@ -64,6 +95,7 @@ interface DayResult {
     referrer: number;
     device: number;
     pathxreferrer: number;
+    country: number;
   };
 }
 
@@ -88,6 +120,80 @@ function incr(
   } else if (kind === "404") {
     if (isBot) c.botNotFounds++;
     else c.notFounds++;
+  }
+}
+
+function trackVisitor(
+  visitors: DimVisitors,
+  rowKey: string,
+  visitorHash: string,
+  tsMs: number,
+): void {
+  let perVisitor = visitors.get(rowKey);
+  if (!perVisitor) {
+    perVisitor = new Map();
+    visitors.set(rowKey, perVisitor);
+  }
+  const tss = perVisitor.get(visitorHash);
+  if (tss) tss.push(tsMs);
+  else perVisitor.set(visitorHash, [tsMs]);
+}
+
+/**
+ * Split a sorted timestamp list into session sizes (events per
+ * session). A gap wider than `SESSION_GAP_MS` starts a new session; an
+ * empty input yields no sessions.
+ */
+function sessionSizes(sortedTss: number[]): number[] {
+  if (sortedTss.length === 0) return [];
+  const sizes: number[] = [];
+  let size = 1;
+  let last = sortedTss[0];
+  for (let i = 1; i < sortedTss.length; i++) {
+    if (sortedTss[i] - last > SESSION_GAP_MS) {
+      sizes.push(size);
+      size = 1;
+    } else {
+      size++;
+    }
+    last = sortedTss[i];
+  }
+  sizes.push(size);
+  return sizes;
+}
+
+/**
+ * Derive visitor/session/bounce counts from a dimension's per-visitor
+ * timestamp timelines. Visitors = distinct hash count; sessions =
+ * total sessions across all visitors; bounces = sessions with exactly
+ * one event.
+ *
+ * Cross-day session stitching is intentionally absent — the daily salt
+ * rotates at 00:00 UTC, so yesterday's visitor hash and today's are
+ * disjoint by construction. A visitor crossing midnight ends up as two
+ * visitors with one session each. That's the privacy-over-fidelity
+ * trade the design signs up for.
+ */
+function applySessionCounters(
+  counts: Map<string, Counts>,
+  visitors: DimVisitors,
+): void {
+  for (const [rowKey, perVisitor] of visitors) {
+    const c = counts.get(rowKey);
+    if (!c) continue;
+    let totalSessions = 0;
+    let totalBounces = 0;
+    for (const tss of perVisitor.values()) {
+      tss.sort((a, b) => a - b);
+      const sizes = sessionSizes(tss);
+      totalSessions += sizes.length;
+      for (const size of sizes) {
+        if (size === 1) totalBounces++;
+      }
+    }
+    c.visitors = perVisitor.size;
+    c.sessions = totalSessions;
+    c.bounces = totalBounces;
   }
 }
 
@@ -182,6 +288,7 @@ app.http("daily", {
 
     const events = getTableClient(TABLE_EVENTS);
     const rollups = getTableClient(TABLE_ROLLUPS);
+    const salts = getTableClient(TABLE_SALTS);
 
     const results: Record<string, DayResult[]> = {};
     for (const site of sites) {
@@ -217,6 +324,7 @@ app.http("daily", {
     // raw-event deletions elsewhere.
     const deleted: Record<string, number> = {};
     let cleanupYmd: string | null = null;
+    let saltsDeleted = 0;
     if (!dateParam) {
       const cleanupTarget = utcDaysAgo(now, RAW_RETENTION_DAYS + 1);
       cleanupYmd = yyyymmdd(cleanupTarget);
@@ -231,6 +339,7 @@ app.http("daily", {
           `daily: deleted ${perSite} raw event(s) from ${cleanupYmd} for ${site}`,
         );
       }
+      saltsDeleted = await cleanupSalts(salts, now, ctx);
     }
 
     ctx.log("daily: complete");
@@ -241,6 +350,7 @@ app.http("daily", {
         sites: results,
         rawDeleted: deleted,
         cleanupDate: cleanupYmd,
+        saltsDeleted,
       },
     };
   },
@@ -260,6 +370,15 @@ async function rollupDay(
   const refCounts = new Map<string, Counts>();
   const deviceCounts = new Map<string, Counts>();
   const pathxRefCounts = new Map<string, Counts>();
+  const countryCounts = new Map<string, Counts>();
+
+  // Per-dimension visitor timelines — accumulated during the scan and
+  // then folded into visitors/sessions/bounces counters post-scan.
+  // Only `device` and `country` carry session counts in v1; per-path
+  // sessions are deferred to avoid the "which path does a multi-path
+  // session belong to" ambiguity.
+  const deviceVisitors: DimVisitors = new Map();
+  const countryVisitors: DimVisitors = new Map();
 
   let eventCount = 0;
 
@@ -271,6 +390,9 @@ async function rollupDay(
       referrerHost?: string | null;
       isMobile?: boolean;
       isBot?: boolean;
+      visitorHash?: string | null;
+      country?: string | null;
+      ts?: string;
     }>({ queryOptions: { filter: `PartitionKey eq '${pk}'` } });
 
     for await (const e of iter) {
@@ -280,6 +402,8 @@ async function rollupDay(
       const path = e.path ?? "";
       const ref = e.referrerHost ?? null;
       const isMobile = e.isMobile ?? false;
+      const country = e.country ?? null;
+      const visitorHash = e.visitorHash ?? null;
 
       if (path) {
         incr(pathCounts, pathRowKey(path), kind, isBot);
@@ -287,6 +411,29 @@ async function rollupDay(
       }
       incr(refCounts, referrerRowKey(ref), kind, isBot);
       incr(deviceCounts, deviceRowKey(isMobile), kind, isBot);
+      incr(countryCounts, countryRowKey(country), kind, isBot);
+
+      // Only non-bot events with a visitor hash contribute to
+      // visitor/session/bounce counts. Bots aren't "visitors"; rows
+      // without a hash (counter-mode history, or signal-mode events
+      // with a missing IP/UA hop) aren't attributable to a visitor.
+      if (!isBot && visitorHash && e.ts) {
+        const tsMs = Date.parse(e.ts);
+        if (!Number.isNaN(tsMs)) {
+          trackVisitor(
+            deviceVisitors,
+            deviceRowKey(isMobile),
+            visitorHash,
+            tsMs,
+          );
+          trackVisitor(
+            countryVisitors,
+            countryRowKey(country),
+            visitorHash,
+            tsMs,
+          );
+        }
+      }
     }
   }
 
@@ -301,20 +448,32 @@ async function rollupDay(
       date: targetYmd,
       events: 0,
       skipped: true,
-      rollupRows: { path: 0, referrer: 0, device: 0, pathxreferrer: 0 },
+      rollupRows: {
+        path: 0,
+        referrer: 0,
+        device: 0,
+        pathxreferrer: 0,
+        country: 0,
+      },
     };
   }
 
-  const [pathRows, refRows, deviceRows, pathxRefRows] = await Promise.all([
-    upsertDimension(rollups, site, target, "path", pathCounts),
-    upsertDimension(rollups, site, target, "referrer", refCounts),
-    upsertDimension(rollups, site, target, "device", deviceCounts),
-    upsertDimension(rollups, site, target, "pathxreferrer", pathxRefCounts),
-  ]);
+  applySessionCounters(deviceCounts, deviceVisitors);
+  applySessionCounters(countryCounts, countryVisitors);
+
+  const [pathRows, refRows, deviceRows, pathxRefRows, countryRows] =
+    await Promise.all([
+      upsertDimension(rollups, site, target, "path", pathCounts),
+      upsertDimension(rollups, site, target, "referrer", refCounts),
+      upsertDimension(rollups, site, target, "device", deviceCounts),
+      upsertDimension(rollups, site, target, "pathxreferrer", pathxRefCounts),
+      upsertDimension(rollups, site, target, "country", countryCounts),
+    ]);
 
   ctx.log(
     `daily: ${targetYmd} rollup rows written — path=${pathRows} ` +
-      `referrer=${refRows} device=${deviceRows} pathxreferrer=${pathxRefRows}`,
+      `referrer=${refRows} device=${deviceRows} pathxreferrer=${pathxRefRows} ` +
+      `country=${countryRows}`,
   );
 
   return {
@@ -326,6 +485,7 @@ async function rollupDay(
       referrer: refRows,
       device: deviceRows,
       pathxreferrer: pathxRefRows,
+      country: countryRows,
     },
   };
 }
@@ -340,20 +500,47 @@ async function upsertDimension(
   const partitionKey = rollupPartitionKey(site, date, dimension);
   let written = 0;
   for (const [rowKey, c] of counts) {
-    await rollups.upsertEntity(
-      {
-        partitionKey,
-        rowKey,
-        pageviews: c.pageviews,
-        notFounds: c.notFounds,
-        botPageviews: c.botPageviews,
-        botNotFounds: c.botNotFounds,
-      },
-      "Replace",
-    );
+    await rollups.upsertEntity(rollupEntity(partitionKey, rowKey, c), "Replace");
     written++;
   }
   return written;
+}
+
+interface RollupEntity {
+  partitionKey: string;
+  rowKey: string;
+  pageviews: number;
+  notFounds: number;
+  botPageviews: number;
+  botNotFounds: number;
+  visitors?: number;
+  sessions?: number;
+  bounces?: number;
+}
+
+/**
+ * Build the Table Storage entity for a rollup row. Core counters are
+ * always present; signal-mode derived counters (`visitors`, `sessions`,
+ * `bounces`) are only included when set, so counter-mode rows don't
+ * carry a wall of zero columns.
+ */
+function rollupEntity(
+  partitionKey: string,
+  rowKey: string,
+  c: Counts,
+): RollupEntity {
+  const entity: RollupEntity = {
+    partitionKey,
+    rowKey,
+    pageviews: c.pageviews,
+    notFounds: c.notFounds,
+    botPageviews: c.botPageviews,
+    botNotFounds: c.botNotFounds,
+  };
+  if (c.visitors !== undefined) entity.visitors = c.visitors;
+  if (c.sessions !== undefined) entity.sessions = c.sessions;
+  if (c.bounces !== undefined) entity.bounces = c.bounces;
+  return entity;
 }
 
 async function deletePartition(
@@ -416,6 +603,9 @@ async function rebuildMonthlyTier(
           notFounds?: number;
           botPageviews?: number;
           botNotFounds?: number;
+          visitors?: number;
+          sessions?: number;
+          bounces?: number;
         }>({ queryOptions: { filter: `PartitionKey eq '${pk}'` } })) {
           if (!row.rowKey) continue;
           rows.push({
@@ -426,6 +616,9 @@ async function rebuildMonthlyTier(
               notFounds: row.notFounds ?? 0,
               botPageviews: row.botPageviews ?? 0,
               botNotFounds: row.botNotFounds ?? 0,
+              visitors: row.visitors,
+              sessions: row.sessions,
+              bounces: row.bounces,
             },
           });
         }
@@ -443,6 +636,7 @@ async function rebuildMonthlyTier(
     path: new Map(),
     referrer: new Map(),
     device: new Map(),
+    country: new Map(),
   };
   for (const batch of dailyBatches) {
     for (const r of batch) {
@@ -456,6 +650,21 @@ async function rebuildMonthlyTier(
       c.notFounds += r.counts.notFounds;
       c.botPageviews += r.counts.botPageviews;
       c.botNotFounds += r.counts.botNotFounds;
+      // Monthly aggregation sums visitors/sessions/bounces across days.
+      // Because each day has a disjoint visitor-hash namespace (daily
+      // salt rotation), a visitor seen on day 1 and day 2 is two
+      // visitors in the monthly view — the sum is the right shape for
+      // the "visits per month" intuition the design can honestly
+      // support.
+      if (r.counts.visitors !== undefined) {
+        c.visitors = (c.visitors ?? 0) + r.counts.visitors;
+      }
+      if (r.counts.sessions !== undefined) {
+        c.sessions = (c.sessions ?? 0) + r.counts.sessions;
+      }
+      if (r.counts.bounces !== undefined) {
+        c.bounces = (c.bounces ?? 0) + r.counts.bounces;
+      }
     }
   }
 
@@ -475,17 +684,7 @@ async function rebuildMonthlyTier(
     const writeTasks: Array<() => Promise<void>> = [];
     for (const [rowKey, counts] of after) {
       writeTasks.push(async () => {
-        await rollups.upsertEntity(
-          {
-            partitionKey: mpk,
-            rowKey,
-            pageviews: counts.pageviews,
-            notFounds: counts.notFounds,
-            botPageviews: counts.botPageviews,
-            botNotFounds: counts.botNotFounds,
-          },
-          "Replace",
-        );
+        await rollups.upsertEntity(rollupEntity(mpk, rowKey, counts), "Replace");
       });
     }
     for (const rowKey of before) {
@@ -502,4 +701,37 @@ async function rebuildMonthlyTier(
       `daily: monthly ${mpk} rebuilt — ${after.size} row(s), ${orphans} orphan(s) purged`,
     );
   }
+}
+
+/**
+ * Delete salt rows older than 2 UTC days. Today's salt stays live;
+ * yesterday's is kept so late-arriving events from the previous day
+ * can still be hashed consistently during the brief overlap window.
+ * Anything earlier is cryptographically unneeded — the events hashed
+ * against those salts have been rolled up and the hashes are now
+ * orphaned, which is the design's privacy guarantee.
+ *
+ * Row keys are yyyymmdd strings which sort lexically the same way they
+ * sort chronologically, so a single `RowKey lt` filter handles the
+ * whole range in one query.
+ */
+async function cleanupSalts(
+  salts: TableClient,
+  now: Date,
+  ctx: InvocationContext,
+): Promise<number> {
+  const cutoff = utcDaysAgo(now, 2);
+  const cutoffYmd = yyyymmdd(cutoff);
+  let deleted = 0;
+  const iter = salts.listEntities({
+    queryOptions: { filter: `RowKey lt '${cutoffYmd}'` },
+  });
+  for await (const row of iter) {
+    if (row.partitionKey && row.rowKey) {
+      await salts.deleteEntity(row.partitionKey, row.rowKey);
+      deleted++;
+    }
+  }
+  ctx.log(`daily: salt GC deleted ${deleted} row(s) older than ${cutoffYmd}`);
+  return deleted;
 }

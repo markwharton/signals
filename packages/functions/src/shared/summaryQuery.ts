@@ -20,8 +20,8 @@ export const ALL_DAYS = 365;
 // host. Raise only if profiling shows queries queuing at the client.
 const READ_CONCURRENCY = 20;
 
-type DailyDimension = "path" | "referrer" | "device";
-type MonthlyDimension = "referrer" | "device";
+type DailyDimension = "path" | "referrer" | "device" | "country";
+type MonthlyDimension = "referrer" | "device" | "country";
 
 /**
  * The sparkline needs per-day granularity (the dashboard chart plots one
@@ -125,6 +125,9 @@ async function readPartition(
       notFounds: row.notFounds ?? 0,
       botPageviews: row.botPageviews ?? 0,
       botNotFounds: row.botNotFounds ?? 0,
+      visitors: row.visitors,
+      sessions: row.sessions,
+      bounces: row.bounces,
     });
   }
   return out;
@@ -164,6 +167,23 @@ function addCounters(a: SummaryCounters, b: Partial<SummaryCounters>): void {
   a.notFounds += b.notFounds ?? 0;
   a.botPageviews += b.botPageviews ?? 0;
   a.botNotFounds += b.botNotFounds ?? 0;
+  // Signal-mode counters: add only when the incoming row carries them,
+  // so counter-mode summaries leave `visitors/sessions/bounces`
+  // undefined on the response rather than surfacing as 0.
+  if (b.visitors !== undefined) a.visitors = (a.visitors ?? 0) + b.visitors;
+  if (b.sessions !== undefined) a.sessions = (a.sessions ?? 0) + b.sessions;
+  if (b.bounces !== undefined) a.bounces = (a.bounces ?? 0) + b.bounces;
+}
+
+function addCountry(
+  totals: Map<string, SummaryCounters>,
+  row: { rowKey: string | undefined } & SummaryCounters,
+): void {
+  const country = row.rowKey;
+  if (!country) return;
+  const entry = totals.get(country) ?? newCounters();
+  addCounters(entry, row);
+  totals.set(country, entry);
 }
 
 function isoDate(d: Date): string {
@@ -226,7 +246,7 @@ export async function buildSummary(
   }
   for (const i of split.tailDayIndices) {
     const d = dayList[i];
-    for (const dim of ["referrer", "device"] as const) {
+    for (const dim of ["referrer", "device", "country"] as const) {
       const pk = rollupPartitionKey(site, d, dim);
       dailyTasks.push(async () => ({
         dayIndex: i,
@@ -236,11 +256,12 @@ export async function buildSummary(
     }
   }
 
-  // Monthly reads: referrer + device for each full calendar month inside
-  // the window. The monthly writer keeps these in sync with the dailies.
+  // Monthly reads: referrer + device + country for each full calendar
+  // month inside the window. The monthly writer keeps these in sync
+  // with the dailies.
   const monthlyTasks: Array<() => Promise<MonthlyRead>> = [];
   for (const m of split.fullMonthStarts) {
-    for (const dim of ["referrer", "device"] as const) {
+    for (const dim of ["referrer", "device", "country"] as const) {
       const pk = rollupMonthlyPartitionKey(site, m, dim);
       monthlyTasks.push(async () => ({
         dim,
@@ -270,7 +291,14 @@ export async function buildSummary(
   const totals = newCounters();
   const pathTotals = new Map<string, SummaryCounters>();
   const referrerTotals = new Map<string, SummaryCounters>();
+  const countryTotals = new Map<string, SummaryCounters>();
   const device = { mobile: 0, desktop: 0, botMobile: 0, botDesktop: 0 };
+
+  // Device-dim row accumulator — exactly two rowKeys (mobile, desktop)
+  // covering 100% of traffic. Summing gives site-level visitor/session/
+  // bounce counts in signal mode; undefined on counter-mode deploys
+  // where the rows don't carry those fields.
+  const siteSignal: SummaryCounters = newCounters();
 
   // Per-day totals rebuilt from the path dimension. Indexed by dayList
   // position so the sparkline stays in calendar order regardless of
@@ -293,17 +321,27 @@ export async function buildSummary(
         for (const row of rows) {
           addReferrer(referrerTotals, row);
         }
-      } else {
+      } else if (dim === "device") {
         for (const row of rows) {
           addDevice(device, row);
+          addCounters(siteSignal, row);
+        }
+      } else {
+        for (const row of rows) {
+          addCountry(countryTotals, row);
         }
       }
     } else {
       const { dim, rows } = res.r;
       if (dim === "referrer") {
         for (const row of rows) addReferrer(referrerTotals, row);
+      } else if (dim === "device") {
+        for (const row of rows) {
+          addDevice(device, row);
+          addCounters(siteSignal, row);
+        }
       } else {
-        for (const row of rows) addDevice(device, row);
+        for (const row of rows) addCountry(countryTotals, row);
       }
     }
   }
@@ -341,6 +379,26 @@ export async function buildSummary(
     .sort((a, b) => b.notFounds - a.notFounds);
   const topBrokenPaths = brokenEntries.slice(0, TOP_N);
 
+  // Site-level signal counters from the device-dim sum. Only surface
+  // them when they're non-zero so counter-mode deploys don't render
+  // misleading `visitors: 0` tiles.
+  if ((siteSignal.sessions ?? 0) > 0) {
+    totals.visitors = siteSignal.visitors;
+    totals.sessions = siteSignal.sessions;
+    totals.bounces = siteSignal.bounces;
+  }
+
+  const countryEntries = Array.from(countryTotals.entries(), ([country, c]) => ({
+    country,
+    ...c,
+  }));
+  countryEntries.sort(
+    (a, b) => b.pageviews + b.notFounds - (a.pageviews + a.notFounds),
+  );
+  const topCountries = countryEntries.length
+    ? countryEntries.slice(0, TOP_N)
+    : undefined;
+
   return {
     timespan: {
       days,
@@ -353,6 +411,7 @@ export async function buildSummary(
     topReferrers,
     topBrokenPaths,
     device,
+    topCountries,
   };
 }
 
