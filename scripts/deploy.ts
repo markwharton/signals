@@ -19,7 +19,7 @@
  */
 
 import { execSync } from "child_process";
-import { rmSync } from "fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "fs";
 
 const ENVIRONMENT = process.env.ENVIRONMENT ?? "prod";
 const RESOURCE_GROUP = `rg-signals-${ENVIRONMENT}`;
@@ -54,6 +54,16 @@ function detectSwa(): string {
 
 const swaApp = process.argv[2] ?? detectSwa();
 
+// --- GeoLite2 fetch (signal mode) -------------------------------------------
+
+// Signal-mode deploys need the MaxMind Country MMDB bundled with the
+// Function app to resolve visitor country codes. Counter-mode deploys
+// don't need it — the file is gitignored and missing from the bundle
+// is a no-op at runtime (country lookups return null). Gated on
+// MAXMIND_LICENSE_KEY so counter-mode deploys still work without a
+// MaxMind account.
+fetchGeoLite2IfLicensed();
+
 // --- Build ------------------------------------------------------------------
 
 // shared must build before functions (workspace:* type resolution) and before
@@ -81,6 +91,16 @@ rmSync("./out/api", { recursive: true, force: true });
 // node_modules/.pnpm virtual store.
 run("pnpm --filter=@signals/functions --prod deploy --legacy ./out/api");
 
+// pnpm deploy copies compiled dist + production node_modules into
+// out/api but not arbitrary top-level directories. Copy the MMDB into
+// the bundle explicitly so the Function can read it at runtime.
+const mmdbSource = "packages/functions/geo/GeoLite2-Country.mmdb";
+if (existsSync(mmdbSource)) {
+  mkdirSync("./out/api/geo", { recursive: true });
+  cpSync(mmdbSource, "./out/api/geo/GeoLite2-Country.mmdb");
+  console.log("Bundled GeoLite2-Country.mmdb into out/api/geo/");
+}
+
 // --- Single SWA deploy for static + API -------------------------------------
 
 console.log(`Deploying to ${swaApp}...`);
@@ -95,3 +115,34 @@ run(
 );
 
 console.log("Deployment complete.");
+
+function fetchGeoLite2IfLicensed(): void {
+  const licenseKey = process.env.MAXMIND_LICENSE_KEY;
+  if (!licenseKey) {
+    console.log(
+      "GeoLite2 fetch skipped — MAXMIND_LICENSE_KEY not set." +
+        " Signal-mode deploys will log `geo: MMDB unavailable` at runtime" +
+        " and return null for country.",
+    );
+    return;
+  }
+  const destDir = "packages/functions/geo";
+  mkdirSync(destDir, { recursive: true });
+  const tarPath = "/tmp/GeoLite2-Country.tar.gz";
+  const extractDir = "/tmp/geolite2-extract";
+  rmSync(extractDir, { recursive: true, force: true });
+  mkdirSync(extractDir, { recursive: true });
+  console.log("Fetching GeoLite2-Country MMDB from MaxMind...");
+  run(
+    `curl -fsSL "https://download.maxmind.com/app/geoip_download` +
+      `?edition_id=GeoLite2-Country&license_key=${licenseKey}` +
+      `&suffix=tar.gz" -o "${tarPath}"`,
+  );
+  run(`tar -xzf "${tarPath}" -C "${extractDir}"`);
+  // Archive contains a single dated subdir like GeoLite2-Country_20260401/.
+  run(
+    `find "${extractDir}" -name "GeoLite2-Country.mmdb"` +
+      ` -exec cp {} "${destDir}/GeoLite2-Country.mmdb" \\;`,
+  );
+  console.log(`GeoLite2-Country.mmdb staged at ${destDir}/.`);
+}

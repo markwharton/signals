@@ -7,6 +7,7 @@ import {
   normalizePath,
 } from "@signals/shared";
 import { extractClientIp } from "../shared/clientIp.js";
+import { lookupCountry } from "../shared/geo.js";
 import { checkRateLimit } from "../shared/rateLimit.js";
 import { getTodaySalt, hashVisitor } from "../shared/salt.js";
 import { getAllowedSites, originMatchesSite } from "../shared/sites.js";
@@ -101,7 +102,7 @@ app.http("collect", {
       const entity = buildEntity(request, now);
 
       if (SIGNALS_MODE === "signal") {
-        await applyVisitorHash(req, entity, now);
+        await applySignalDerivations(req, entity, now);
       }
 
       await getTableClient(TABLE_EVENTS).createEntity(entity);
@@ -150,6 +151,7 @@ interface EventEntity {
   // request IP/UA + today's salt and is `null` when the IP or UA
   // header was missing. `country` lands in commit 3.
   visitorHash?: string | null;
+  country?: string | null;
   screenW?: number;
   screenH?: number;
   lang?: string | null;
@@ -157,22 +159,26 @@ interface EventEntity {
 }
 
 /**
- * Compute the visitor hash and attach it to the entity. Reads IP and
- * User-Agent from request headers, feeds them into a sha256 with
- * today's salt, and discards both at end-of-block — neither value is
- * logged or persisted anywhere.
+ * Compute the visitor hash and country and attach them to the entity.
+ * Reads IP and User-Agent from request headers, feeds them into a
+ * sha256 with today's salt, looks up the country from GeoLite2, and
+ * discards IP/UA at end-of-block — neither value is logged or
+ * persisted anywhere. Only the hash and country cross into the event
+ * row.
  *
  * A missing IP or UA header produces `visitorHash: null` rather than a
- * 400: the event still counts toward pageview totals, it just can't be
- * attributed to a visitor. Fail-fast applies to malformed payload
- * structure, not to an absent optional hop.
+ * 400; a GeoLite2 miss produces `country: null`. The event still
+ * counts toward pageview totals; fail-fast applies to malformed
+ * payload structure, not to an absent optional hop.
  */
-async function applyVisitorHash(
+async function applySignalDerivations(
   req: HttpRequest,
   entity: EventEntity,
   now: Date,
 ): Promise<void> {
   const ip = extractClientIp(req);
+  entity.country = lookupCountry(ip);
+
   const ua = req.headers.get("user-agent");
   if (!ip || !ua) {
     entity.visitorHash = null;

@@ -1,10 +1,11 @@
-// Counter-mode beacon for signals.
+// Counter-mode and signal-mode beacon for signals.
 //
 // Runs as a classic browser script embedded via:
 //   <script
 //     src="https://{swa}/beacon.js"
 //     data-site="plankit.com"
-//     data-endpoint="https://{funcapp}.azurewebsites.net/api/collect">
+//     data-endpoint="https://{funcapp}.azurewebsites.net/api/collect"
+//     data-mode="counter">   <!-- or data-mode="signal" -->
 //   </script>
 //
 // data-endpoint is required when the beacon script origin differs from the
@@ -19,20 +20,36 @@
 // from real pageviews in rollups. Unknown values warn and fall back to
 // pageview; a fire-and-forget beacon should fail soft.
 //
-// Privacy envelope: no cookies, no IPs, no fingerprints, no sessions,
-// no raw user-agent, no referrer query strings. The payload includes
-// only the fields the privacy policy enumerates. Bot classification is
-// done client-side via isbot; only the derived boolean crosses the wire.
+// data-mode defaults to "counter". "signal" emits a v:2 payload with
+// extra browser context (screen, lang, tz) alongside the counter-mode
+// fields; the server derives the visitor hash and country from the
+// request headers, so no identifier is computed in the browser. Unknown
+// values warn and bail out rather than choose a default — an operator
+// who mis-spells the attribute shouldn't silently get a different
+// privacy envelope than they asked for.
+//
+// Privacy envelope:
+//   counter mode: no cookies, no IPs, no fingerprints, no sessions, no
+//     raw user-agent, no referrer query strings. The payload includes
+//     only the fields the privacy policy enumerates.
+//   signal mode: the browser sends the same counter-mode fields plus
+//     optional screen/lang/tz. The server computes `sha256(salt_today
+//     ‖ ip ‖ ua ‖ site)` and a GeoLite2 country code from the request
+//     headers it already receives. IP and UA are never persisted.
+//
+// Bot classification is done client-side via isbot; only the derived
+// boolean crosses the wire.
 //
 // Built by esbuild as a single IIFE so the output is safe to embed in a
 // plain <script> tag without type="module". isbot is inlined by the
 // bundler; the `import { isbot }` below resolves at build time. The
-// payload shape mirrors CollectRequest in @signals/shared; the server
-// validates on receipt, so a drift surfaces as a rejected request.
+// payload shape mirrors CollectRequestV1/V2 in @signals/shared; the
+// server validates on receipt, so a drift surfaces as a rejected
+// request.
 
 import { isbot } from "isbot";
 
-interface CollectPayload {
+interface CollectPayloadV1 {
   v: 1;
   kind: "pageview" | "404";
   site: string;
@@ -40,6 +57,19 @@ interface CollectPayload {
   referrerHost: string | null;
   isMobile: boolean;
   isBot: boolean;
+}
+
+interface CollectPayloadV2 {
+  v: 2;
+  kind: "pageview" | "404";
+  site: string;
+  path: string;
+  referrerHost: string | null;
+  isMobile: boolean;
+  isBot: boolean;
+  screen: { w: number; h: number } | null;
+  lang: string | null;
+  tz: string | null;
 }
 
 (function signalsBeacon(): void {
@@ -50,35 +80,59 @@ interface CollectPayload {
   if (!site) return;
 
   const mode = scriptEl.getAttribute("data-mode") ?? "counter";
-  if (mode !== "counter") return;
-
   const kind = resolveKind(scriptEl);
 
   const endpoint = resolveEndpoint(scriptEl);
   if (!endpoint) return;
 
-  const payload: CollectPayload = {
-    v: 1,
-    kind,
-    site,
-    path: location.pathname,
-    referrerHost: computeReferrerHost(document.referrer, location.hostname),
-    isMobile: detectMobile(),
-    isBot: detectBot(),
-  };
+  if (mode === "counter") {
+    const payload: CollectPayloadV1 = {
+      v: 1,
+      kind,
+      site,
+      path: location.pathname,
+      referrerHost: computeReferrerHost(document.referrer, location.hostname),
+      isMobile: detectMobile(),
+      isBot: detectBot(),
+    };
+    send(endpoint, payload);
+    return;
+  }
 
+  if (mode === "signal") {
+    const payload: CollectPayloadV2 = {
+      v: 2,
+      kind,
+      site,
+      path: location.pathname,
+      referrerHost: computeReferrerHost(document.referrer, location.hostname),
+      isMobile: detectMobile(),
+      isBot: detectBot(),
+      screen: detectScreen(),
+      lang: detectLang(),
+      tz: detectTz(),
+    };
+    send(endpoint, payload);
+    return;
+  }
+
+  console.warn(
+    `signals beacon: unknown data-mode "${mode}", no beacon sent`,
+  );
+})();
+
+function send(endpoint: string, payload: CollectPayloadV1 | CollectPayloadV2): void {
   const blob = new Blob([JSON.stringify(payload)], { type: "text/plain" });
-
   if (navigator.sendBeacon) {
     navigator.sendBeacon(endpoint, blob);
-  } else {
-    fetch(endpoint, { method: "POST", body: blob, keepalive: true }).catch(
-      () => {
-        /* best effort; page may be unloading */
-      },
-    );
+    return;
   }
-})();
+  fetch(endpoint, { method: "POST", body: blob, keepalive: true }).catch(
+    () => {
+      /* best effort; page may be unloading */
+    },
+  );
+}
 
 function resolveKind(scriptEl: HTMLScriptElement): "pageview" | "404" {
   const attr = scriptEl.getAttribute("data-kind") ?? "pageview";
@@ -134,4 +188,24 @@ function detectMobile(): boolean {
     return uaData.mobile;
   }
   return /Mobile|Android|iPhone|iPod/i.test(navigator.userAgent);
+}
+
+function detectScreen(): { w: number; h: number } | null {
+  if (typeof screen === "undefined") return null;
+  const w = screen.width;
+  const h = screen.height;
+  if (typeof w !== "number" || typeof h !== "number") return null;
+  return { w, h };
+}
+
+function detectLang(): string | null {
+  return navigator.language || null;
+}
+
+function detectTz(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
 }

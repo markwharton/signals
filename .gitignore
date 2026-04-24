@@ -7,6 +7,9 @@ out/
 # Beacon build artifact copied into dashboard for deployment
 packages/dashboard/public/beacon.js
 
+# GeoLite2 MMDB — fetched at deploy time, never committed (MaxMind TOS)
+packages/functions/geo/*.mmdb
+
 # Node
 node_modules/
 
