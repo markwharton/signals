@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": { "value": "signals" },
+    "location": { "value": "australiaeast" },
+    "staticWebAppLocation": { "value": "eastasia" },
+    "environment": { "value": "dev" },
+    "sites": { "value": "example.test" },
+    "signalsMode": { "value": "signal" },
+    "timezone": { "value": "Australia/Brisbane" }
+  }
+}
