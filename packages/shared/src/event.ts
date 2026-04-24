@@ -1,11 +1,21 @@
 import { ulid } from "ulid";
 
-/** Current wire-format version. Bump if the CollectRequest shape changes. */
+/** Counter-mode wire-format version. */
 export const EVENT_VERSION = 1 as const;
 
-/** Fields present on every stored event. */
+/** Signal-mode wire-format version. */
+export const EVENT_VERSION_SIGNAL = 2 as const;
+
+/**
+ * Fields present on every stored event.
+ *
+ * Signal-mode-only columns (`visitorHash`, `country`, `screenW`, `screenH`,
+ * `lang`, `tz`) are optional on the stored shape so one type covers both
+ * counter-mode and signal-mode deployments. Counter-mode deploys leave
+ * them undefined; signal-mode deploys populate them at `/api/collect`.
+ */
 export interface BaseStoredEvent {
-  v: 1;
+  v: 1 | 2;
   kind: string;
   site: string;
   /** ISO 8601 UTC timestamp, set server-side on receipt. */
@@ -15,6 +25,23 @@ export interface BaseStoredEvent {
    *  bot traffic into distinct counter columns without defaulting at
    *  read time. */
   isBot: boolean;
+  /** sha256(salt_today ‖ ip ‖ ua ‖ site) hex digest. `null` when the
+   *  request had no usable IP header. Only populated on signal-mode
+   *  deploys. The salt row is deleted ~48h after the visit, after which
+   *  this value is cryptographically orphaned. */
+  visitorHash?: string | null;
+  /** ISO 3166-1 alpha-2 country from a GeoLite2 lookup on the request
+   *  IP. `null` when the lookup missed (private IP, unmapped range, or
+   *  MMDB unavailable). Never derived from `Accept-Language`. */
+  country?: string | null;
+  /** Browser-reported screen pixel dimensions, flattened from the wire
+   *  `screen: { w, h }` shape. */
+  screenW?: number | null;
+  screenH?: number | null;
+  /** `navigator.language` at collection time. */
+  lang?: string | null;
+  /** IANA tz database name from `Intl.DateTimeFormat().resolvedOptions()`. */
+  tz?: string | null;
 }
 
 /** A pageview — a successfully served page. */
@@ -42,14 +69,13 @@ export interface NotFoundEvent extends BaseStoredEvent {
 /** Union of all stored event kinds. Extend as new kinds land. */
 export type Event = PageviewEvent | NotFoundEvent;
 
-/** Wire format — what the beacon POSTs to /api/collect.
+/** Counter-mode wire format — what a `data-mode="counter"` beacon POSTs.
  *
  *  `isBot` is optional during the beacon-cache transition window after
  *  adding the field: old cached beacons don't emit it. The server
  *  defaults missing to `false` when writing the stored entity, so every
- *  stored row carries a concrete boolean. Tighten to required in a
- *  future release once all beacons have refreshed. */
-export interface CollectRequest {
+ *  stored row carries a concrete boolean. */
+export interface CollectRequestV1 {
   v: 1;
   kind: "pageview" | "404";
   site: string;
@@ -58,6 +84,29 @@ export interface CollectRequest {
   isMobile: boolean;
   isBot?: boolean;
 }
+
+/** Signal-mode wire format — what a `data-mode="signal"` beacon POSTs.
+ *
+ *  Adds optional browser context (`screen`, `lang`, `tz`). The visitor
+ *  hash and country are server-derived from the request IP/UA and never
+ *  cross the wire from the browser. */
+export interface CollectRequestV2 {
+  v: 2;
+  kind: "pageview" | "404";
+  site: string;
+  path: string;
+  referrerHost: string | null;
+  isMobile: boolean;
+  isBot?: boolean;
+  /** Browser-reported screen dimensions, or `null` when unavailable. */
+  screen?: { w: number; h: number } | null;
+  /** `navigator.language` or `null`. */
+  lang?: string | null;
+  /** IANA tz database name or `null`. */
+  tz?: string | null;
+}
+
+export type CollectRequest = CollectRequestV1 | CollectRequestV2;
 
 /**
  * Azure Tables partition key for raw events.
