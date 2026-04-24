@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.7.0] - 2026-04-24
+
+### Added
+
+- add v2 wire format, mode gate, DNT/GPC (21f8609)
+- add visitor hashing with daily-rotated salt (3c86091)
+- add GeoLite2 country lookup and signal-mode beacon (a138830)
+- derive sessions/bounces/visitors and per-country rollup (2ff2137)
+
+### Documentation
+
+- document MAXMIND_LICENSE_KEY in scripts/.env.example (9eb79be)
+
+### Maintenance
+
+- add parameters.dev.json for signal-mode test deploys (3d00cbb)
+- update managed files for v0.14.1 (f95333d)
+
 ## [v0.6.0] - 2026-04-22
 
 ### Added
@@ -146,3 +164,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.4.0]: https://github.com/markwharton/signals/compare/v0.3.0...v0.4.0
 [v0.5.0]: https://github.com/markwharton/signals/compare/v0.4.0...v0.5.0
 [v0.6.0]: https://github.com/markwharton/signals/compare/v0.5.0...v0.6.0
+[v0.7.0]: https://github.com/markwharton/signals/compare/v0.6.0...v0.7.0
