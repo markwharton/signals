@@ -1,6 +1,6 @@
 ---
 description: Three-layer architecture (pk commands, hooks, skills) and hook behavior
-pk_sha256: 8c213fd4bb44f251cef8ace5a5fefa62f85352dc2d24d8ca875cf9c4c10eedcd
+pk_sha256: 87a37f0e28171b23ef6460f531630a02da170bc24fcdf9c8c58508a298e1e96d
 ---
 
 # Plankit Tooling
@@ -15,11 +15,15 @@ pk_sha256: 8c213fd4bb44f251cef8ace5a5fefa62f85352dc2d24d8ca875cf9c4c10eedcd
 
 - **`pk guard` blocks git mutations on protected branches.** If the project uses ask mode, you will be prompted instead — respect the user's decision either way. When blocked, switch to the development branch.
 - **`pk protect` blocks edits to pk-managed files.** The block reason tells you why — adjust your approach, don't try to work around it.
-- **`pk preserve` runs after exiting plan mode.** Behavior depends on project configuration — it may preserve automatically or notify that a plan is ready.
+- **`pk preserve` runs after exiting plan mode.** Behavior depends on project configuration — it may preserve automatically or notify that a plan is ready. If the user types `/preserve`, dispatch the skill as your next action — never queue it behind implementation work. `/preserve` is an explicit request, not a go-signal for something else.
 
 ## Session Bootstrap
 
 - **pk installs itself in cloud sandboxes.** The SessionStart hook downloads pk if it's not already available. If pk is already on PATH, the hook exits immediately. No action needed.
+
+## Committing pk Setup Changes
+
+- **Commit `pk setup` updates on their own.** When `pk setup` creates or updates managed files (skills, rules, CLAUDE.md, install-pk.sh), commit those changes separately rather than folding them into feature work. Keeps history scannable and makes pk-upgrade churn distinguishable from project changes. Suggested message: `chore(pk): update managed files for v<VERSION>` where `<VERSION>` is the installed pk version.
 
 ## Flag Conventions
 
