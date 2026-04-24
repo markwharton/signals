@@ -1,7 +1,12 @@
-// Storage account + Tables (events, rollups). Auth is via connection
-// string read from the SWA app settings at function runtime — no MI,
-// no role assignments, no deployment container. Matches Timekeeper's
-// reference pattern.
+// Storage account + Tables (events, rollups, salts). Auth is via
+// connection string read from the SWA app settings at function runtime
+// — no MI, no role assignments, no deployment container. Matches
+// Timekeeper's reference pattern.
+//
+// `salts` is only written on signal-mode deploys (one row per
+// (site, yyyymmdd) carrying that day's random 32-byte visitor-hash
+// salt). The table is provisioned unconditionally so counter-mode
+// deploys can flip to signal mode without a separate infra step.
 
 param storageAccountName string
 param location string
@@ -35,6 +40,11 @@ resource eventsTable 'Microsoft.Storage/storageAccounts/tableServices/tables@202
 resource rollupsTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
   parent: tableService
   name: 'rollups'
+}
+
+resource saltsTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
+  parent: tableService
+  name: 'salts'
 }
 
 output name string = storageAccount.name

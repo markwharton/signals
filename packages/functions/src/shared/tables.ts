@@ -21,3 +21,4 @@ export function getTableClient(tableName: string): TableClient {
 
 export const TABLE_EVENTS = "events";
 export const TABLE_ROLLUPS = "rollups";
+export const TABLE_SALTS = "salts";

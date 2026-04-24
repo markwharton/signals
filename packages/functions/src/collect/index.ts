@@ -6,7 +6,9 @@ import {
   eventRowKey,
   normalizePath,
 } from "@signals/shared";
+import { extractClientIp } from "../shared/clientIp.js";
 import { checkRateLimit } from "../shared/rateLimit.js";
+import { getTodaySalt, hashVisitor } from "../shared/salt.js";
 import { getAllowedSites, originMatchesSite } from "../shared/sites.js";
 import { TABLE_EVENTS, getTableClient } from "../shared/tables.js";
 import { parseCollectRequest } from "./validate.js";
@@ -98,6 +100,10 @@ app.http("collect", {
       const now = new Date();
       const entity = buildEntity(request, now);
 
+      if (SIGNALS_MODE === "signal") {
+        await applyVisitorHash(req, entity, now);
+      }
+
       await getTableClient(TABLE_EVENTS).createEntity(entity);
       return { status: 204 };
     } catch (err) {
@@ -138,13 +144,42 @@ interface EventEntity {
   isMobile: boolean;
   isBot: boolean;
   ts: string;
-  // Signal-mode columns; set by later commits on the hot path. v2 wire
-  // payloads carry screen/lang/tz from the browser — flattened here so
-  // Table Storage primitive columns hold the values directly.
+  // Signal-mode columns. v2 wire payloads carry screen/lang/tz from the
+  // browser — flattened here so Table Storage primitive columns hold
+  // the values directly. `visitorHash` is server-derived from the
+  // request IP/UA + today's salt and is `null` when the IP or UA
+  // header was missing. `country` lands in commit 3.
+  visitorHash?: string | null;
   screenW?: number;
   screenH?: number;
   lang?: string | null;
   tz?: string | null;
+}
+
+/**
+ * Compute the visitor hash and attach it to the entity. Reads IP and
+ * User-Agent from request headers, feeds them into a sha256 with
+ * today's salt, and discards both at end-of-block — neither value is
+ * logged or persisted anywhere.
+ *
+ * A missing IP or UA header produces `visitorHash: null` rather than a
+ * 400: the event still counts toward pageview totals, it just can't be
+ * attributed to a visitor. Fail-fast applies to malformed payload
+ * structure, not to an absent optional hop.
+ */
+async function applyVisitorHash(
+  req: HttpRequest,
+  entity: EventEntity,
+  now: Date,
+): Promise<void> {
+  const ip = extractClientIp(req);
+  const ua = req.headers.get("user-agent");
+  if (!ip || !ua) {
+    entity.visitorHash = null;
+    return;
+  }
+  const salt = await getTodaySalt(entity.site, now);
+  entity.visitorHash = hashVisitor(salt, ip, ua, entity.site);
 }
 
 function buildEntity(request: CollectRequest, now: Date): EventEntity {
