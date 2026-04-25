@@ -28,14 +28,13 @@ export function getAllowedSites(): Set<string> {
 }
 
 /**
- * First site in the allowlist. Used by handlers that don't yet take
- * a `?site=` query param (summary, mcp). Step 2 of the multi-tenant
- * migration adds the param plumbing; until then, single-site deploys
- * see no behavior change because "first site" == "the site".
+ * Predicate for handler-boundary site validation. Path-routed handlers
+ * (`/api/{site}/summary`, `signals_summary` MCP tool) reject any value
+ * that isn't a current allowlist member, so a stray bookmark or typo
+ * never reads a sibling site's data.
  */
-export function getDefaultSite(): string {
-  const sites = getAllowedSites();
-  return sites.values().next().value as string;
+export function isAllowedSite(site: string): boolean {
+  return getAllowedSites().has(site);
 }
 
 /**

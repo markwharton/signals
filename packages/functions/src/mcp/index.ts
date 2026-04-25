@@ -5,7 +5,7 @@ import type {
 } from "@azure/functions";
 import { app } from "@azure/functions";
 import { validateApiKey } from "../shared/apiKey.js";
-import { getDefaultSite } from "../shared/sites.js";
+import { getAllowedSites, isAllowedSite } from "../shared/sites.js";
 import { ALL_DAYS, buildSummary } from "../shared/summaryQuery.js";
 
 /**
@@ -48,12 +48,9 @@ app.http("mcp", {
     req: HttpRequest,
     ctx: InvocationContext,
   ): Promise<HttpResponseInit> => {
-    let site: string;
+    let allowedSites: string[];
     try {
-      // Step 2 will accept a `site` tool argument; for now the tool
-      // serves the first allowlisted site so existing callers see no
-      // behavior change on single-site deploys.
-      site = getDefaultSite();
+      allowedSites = [...getAllowedSites()].sort();
     } catch (err) {
       ctx.error(`mcp: ${(err as Error).message}`);
       return jsonRpcError(-32603, "Server not configured");
@@ -85,11 +82,18 @@ app.http("mcp", {
         "signals_summary",
         {
           description:
-            "Aggregate pageview and 404 counts for the tracked site over a " +
-            "UTC time window, broken down by path, referrer, and device. " +
-            "Includes bot traffic as separate fields so callers can " +
-            "distinguish human from automated traffic.",
+            "Aggregate pageview and 404 counts for an allowlisted site " +
+            "over a UTC time window, broken down by path, referrer, and " +
+            "device. Includes bot traffic as separate fields so callers " +
+            "can distinguish human from automated traffic. " +
+            `Allowlisted sites on this deploy: ${allowedSites.join(", ")}.`,
           inputSchema: {
+            site: z
+              .string()
+              .min(1)
+              .describe(
+                `Site to summarize. Must be one of: ${allowedSites.join(", ")}.`,
+              ),
             days: z
               .union([z.number().int().min(1).max(365), z.literal("all")])
               .optional()
@@ -100,7 +104,19 @@ app.http("mcp", {
               ),
           },
         },
-        async ({ days }: { days?: number | "all" }) => {
+        async ({ site, days }: { site: string; days?: number | "all" }) => {
+          if (!isAllowedSite(site)) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `Unknown site "${site}". Allowed: ${allowedSites.join(", ")}.`,
+                },
+              ],
+            };
+          }
           const resolved = days === "all" ? ALL_DAYS : (days ?? 7);
           const summary = await buildSummary(site, resolved);
           return {

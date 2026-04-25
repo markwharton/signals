@@ -16,7 +16,7 @@ func cmdDay(args []string) error {
 	if err != nil {
 		return err
 	}
-	renderSummary(summary, flags.includeBots, false /* no sparkline */)
+	renderSummary(flags.site, summary, flags.includeBots, false /* no sparkline */)
 	return nil
 }
 
@@ -25,7 +25,7 @@ func cmdWeek(args []string) error {
 	if err != nil {
 		return err
 	}
-	renderSummary(summary, flags.includeBots, true /* sparkline */)
+	renderSummary(flags.site, summary, flags.includeBots, true /* sparkline */)
 	return nil
 }
 
@@ -34,7 +34,7 @@ func cmdPaths(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(headline(summary))
+	fmt.Println(headline(flags.site, summary))
 	fmt.Println()
 	renderPaths(summary.TopPaths, flags.includeBots)
 	return nil
@@ -45,18 +45,18 @@ func cmdReferrers(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(headline(summary))
+	fmt.Println(headline(flags.site, summary))
 	fmt.Println()
 	renderReferrers(summary.TopReferrers, flags.includeBots)
 	return nil
 }
 
 func cmdBroken(args []string) error {
-	_, summary, err := setup("404s", args, "7")
+	flags, summary, err := setup("404s", args, "7")
 	if err != nil {
 		return err
 	}
-	fmt.Println(headline(summary))
+	fmt.Println(headline(flags.site, summary))
 	fmt.Println()
 	renderBroken(summary.TopBrokenPaths)
 	return nil
@@ -67,18 +67,18 @@ func cmdDevice(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(headline(summary))
+	fmt.Println(headline(flags.site, summary))
 	fmt.Println()
 	renderDevice(summary.Device, flags.includeBots)
 	return nil
 }
 
 func cmdBots(args []string) error {
-	_, summary, err := setup("bots", args, "7")
+	flags, summary, err := setup("bots", args, "7")
 	if err != nil {
 		return err
 	}
-	fmt.Println(headline(summary))
+	fmt.Println(headline(flags.site, summary))
 	fmt.Println()
 	renderBots(summary.Totals)
 	return nil
@@ -86,8 +86,8 @@ func cmdBots(args []string) error {
 
 // --- renderers ---------------------------------------------------------------
 
-func renderSummary(s *apiclient.Summary, includeBots, sparkline bool) {
-	fmt.Println(headline(s))
+func renderSummary(site string, s *apiclient.Summary, includeBots, sparkline bool) {
+	fmt.Println(headline(site, s))
 	fmt.Println()
 
 	pv := s.Totals.Pageviews

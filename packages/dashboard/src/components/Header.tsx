@@ -4,6 +4,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { TimespanParam } from "@/lib/api";
 
 interface HeaderProps {
+  sites: string[];
+  selectedSite: string;
+  onSelectedSiteChange: (value: string) => void;
   timespan: TimespanParam;
   onTimespanChange: (value: TimespanParam) => void;
   showBots: boolean;
@@ -11,6 +14,9 @@ interface HeaderProps {
 }
 
 export function Header({
+  sites,
+  selectedSite,
+  onSelectedSiteChange,
   timespan,
   onTimespanChange,
   showBots,
@@ -20,6 +26,19 @@ export function Header({
     <header className="flex flex-wrap items-center justify-between gap-4 border-b px-4 py-3 md:px-6">
       <h1 className="text-xl font-semibold tracking-tight">signals</h1>
       <div className="flex flex-wrap items-center gap-4">
+        {sites.length > 1 ? (
+          <select
+            value={selectedSite}
+            onChange={(e) => onSelectedSiteChange(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {sites.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <Tabs
           value={timespan}
           onValueChange={(v) => onTimespanChange(v as TimespanParam)}

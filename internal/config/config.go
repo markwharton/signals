@@ -12,11 +12,13 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Config is the loaded endpoint + key pair. Both must be non-empty
-// for a request to proceed.
+// Config is the loaded endpoint, API key, and target site. All three
+// must be non-empty for a request to proceed — `site` selects which
+// allowlisted site the read endpoints address.
 type Config struct {
 	Endpoint string `toml:"endpoint"`
 	APIKey   string `toml:"api_key"`
+	Site     string `toml:"site"`
 }
 
 // ErrMissingConfig signals the caller should emit the first-run
@@ -26,7 +28,7 @@ var ErrMissingConfig = errors.New("no signals config found")
 // Load reads the config file (if present), overlays env vars, then
 // overlays any non-empty flag values. Returns ErrMissingConfig when
 // the resulting config is incomplete.
-func Load(endpointFlag, apiKeyFlag string) (Config, error) {
+func Load(endpointFlag, apiKeyFlag, siteFlag string) (Config, error) {
 	var cfg Config
 
 	if path, err := filePath(); err == nil {
@@ -43,6 +45,9 @@ func Load(endpointFlag, apiKeyFlag string) (Config, error) {
 	if v := os.Getenv("SIGNALS_API_KEY"); v != "" {
 		cfg.APIKey = v
 	}
+	if v := os.Getenv("SIGNALS_SITE"); v != "" {
+		cfg.Site = v
+	}
 
 	if endpointFlag != "" {
 		cfg.Endpoint = endpointFlag
@@ -50,8 +55,11 @@ func Load(endpointFlag, apiKeyFlag string) (Config, error) {
 	if apiKeyFlag != "" {
 		cfg.APIKey = apiKeyFlag
 	}
+	if siteFlag != "" {
+		cfg.Site = siteFlag
+	}
 
-	if cfg.Endpoint == "" || cfg.APIKey == "" {
+	if cfg.Endpoint == "" || cfg.APIKey == "" || cfg.Site == "" {
 		return cfg, ErrMissingConfig
 	}
 	return cfg, nil
@@ -79,17 +87,20 @@ func filePath() (string, error) {
 // ErrMissingConfig. Offers all three configuration paths rather than
 // picking one, because first-run users haven't committed to a style.
 func FirstRunMessage() string {
-	return fmt.Sprintf(`Error: no signals config found.
+	return fmt.Sprintf(`Error: signals config is incomplete.
 
-Configure by either:
+sig needs an endpoint, an admin API key, and a site (one of the values
+in the deploy's SIGNALS_SITES allowlist). Configure by either:
   1. Set environment variables:
        export SIGNALS_ENDPOINT="https://..."
        export SIGNALS_API_KEY="pk_admin_..."
+       export SIGNALS_SITE="plankit.com"
   2. Create %s:
        endpoint = "https://..."
-       api_key = "pk_admin_..."
+       api_key  = "pk_admin_..."
+       site     = "plankit.com"
   3. Pass flags:
-       sig day --endpoint="https://..." --api-key="pk_admin_..."
+       sig day --endpoint="https://..." --api-key="pk_admin_..." --site="plankit.com"
 
 Generate an API key with: pnpm run generate:api-key admin <source-name>
 (run from the signals repo)

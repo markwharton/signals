@@ -4,4 +4,5 @@
 import "./collect/index.js";
 import "./daily/index.js";
 import "./mcp/index.js";
+import "./sites/index.js";
 import "./summary/index.js";

@@ -14,9 +14,10 @@ type commonFlags struct {
 	includeBots bool
 	endpoint    string
 	apiKey      string
+	site        string
 }
 
-// registerCommon wires the four shared flags onto fs. defaultDays
+// registerCommon wires the five shared flags onto fs. defaultDays
 // varies per command ("1" for today, "7" for everything else).
 func registerCommon(fs *flag.FlagSet, defaultDays string) *commonFlags {
 	f := &commonFlags{}
@@ -28,6 +29,8 @@ func registerCommon(fs *flag.FlagSet, defaultDays string) *commonFlags {
 		"api endpoint (overrides config / env)")
 	fs.StringVar(&f.apiKey, "api-key", "",
 		"api key (overrides config / env)")
+	fs.StringVar(&f.site, "site", "",
+		"site to summarize, must be in the deploy's SIGNALS_SITES allowlist")
 	return f
 }
 
@@ -40,15 +43,16 @@ func setup(name string, args []string, defaultDays string) (*commonFlags, *apicl
 	if err := fs.Parse(args); err != nil {
 		return nil, nil, err
 	}
-	cfg, err := config.Load(flags.endpoint, flags.apiKey)
+	cfg, err := config.Load(flags.endpoint, flags.apiKey, flags.site)
 	if err != nil {
 		return nil, nil, err
 	}
 	client := apiclient.New(cfg.Endpoint, cfg.APIKey)
-	summary, err := client.Summary(flags.days)
+	summary, err := client.Summary(cfg.Site, flags.days)
 	if err != nil {
 		return nil, nil, err
 	}
+	flags.site = cfg.Site
 	return flags, summary, nil
 }
 
@@ -62,13 +66,14 @@ func counterTotal(c apiclient.SummaryCounters, includeBots bool) int {
 	return t
 }
 
-// headline renders the window line every summary-style subcommand
-// prints at the top. signals is single-tenant, so the site identifier
-// isn't useful; callers know which site they configured.
-func headline(s *apiclient.Summary) string {
+// headline renders the site + window line every summary-style
+// subcommand prints at the top. With multi-site support the site
+// identifier disambiguates output when an operator switches between
+// sites in a single shell session.
+func headline(site string, s *apiclient.Summary) string {
 	if s.Timespan.StartDate == s.Timespan.EndDate {
-		return fmt.Sprintf("%s (UTC)", s.Timespan.EndDate)
+		return fmt.Sprintf("%s — %s (UTC)", site, s.Timespan.EndDate)
 	}
-	return fmt.Sprintf("%s to %s (UTC)",
-		s.Timespan.StartDate, s.Timespan.EndDate)
+	return fmt.Sprintf("%s — %s to %s (UTC)",
+		site, s.Timespan.StartDate, s.Timespan.EndDate)
 }

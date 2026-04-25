@@ -9,9 +9,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
+
+// urlEscape returns the path-segment-safe form of `s`. Site names are
+// DNS labels (alphanumeric, dots, hyphens) so this is rarely a no-op,
+// but it keeps the URL well-formed if a future allowlist entry has a
+// reserved character.
+func urlEscape(s string) string {
+	return url.PathEscape(s)
+}
 
 // SummaryCounters carries the four-way split every rollup row
 // exposes: non-bot pageviews and 404s, and the bot-flagged versions
@@ -83,10 +92,12 @@ func New(endpoint, apiKey string) *Client {
 	}
 }
 
-// Summary calls GET /api/summary?days=<days>. `days` accepts "7",
-// "30", or "all" (server-enforced).
-func (c *Client) Summary(days string) (*Summary, error) {
-	url := fmt.Sprintf("%s/api/summary?days=%s", c.Endpoint, days)
+// Summary calls GET /api/{site}/summary?days=<days>. `days` accepts
+// "7", "30", or "all" (server-enforced). `site` must be in the
+// deploy's SIGNALS_SITES allowlist; the server returns 400 otherwise.
+func (c *Client) Summary(site, days string) (*Summary, error) {
+	url := fmt.Sprintf("%s/api/%s/summary?days=%s",
+		c.Endpoint, urlEscape(site), days)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

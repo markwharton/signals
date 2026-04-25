@@ -5,11 +5,19 @@ import type {
 } from "@azure/functions";
 import { app } from "@azure/functions";
 import { authenticateAdmin, describeAuth } from "../shared/auth.js";
-import { getDefaultSite } from "../shared/sites.js";
+import { isAllowedSite } from "../shared/sites.js";
 import { buildSummary, parseDays } from "../shared/summaryQuery.js";
 
+/**
+ * GET /api/{site}/summary — return the dashboard summary for `site`
+ * over the requested UTC window.
+ *
+ * `site` is a path parameter, validated against the `SIGNALS_SITES`
+ * allowlist. A request for a site outside the allowlist returns 400
+ * (not 404) — the route itself matched, only the value is wrong.
+ */
 app.http("summary", {
-  route: "summary",
+  route: "{site}/summary",
   methods: ["GET"],
   authLevel: "anonymous",
   handler: async (
@@ -21,12 +29,15 @@ app.http("summary", {
       return { status: 401 };
     }
 
-    let site: string;
+    const site = req.params.site;
+    if (!site) {
+      return { status: 400, jsonBody: { error: "site path parameter required" } };
+    }
     try {
-      // Step 2 will accept ?site= and validate against the allowlist;
-      // for now the summary handler reads the first allowlisted site,
-      // which preserves single-site behavior verbatim.
-      site = getDefaultSite();
+      if (!isAllowedSite(site)) {
+        ctx.warn(`summary: site "${site}" not in allowlist`);
+        return { status: 400, jsonBody: { error: `unknown site: ${site}` } };
+      }
     } catch (err) {
       ctx.error(`summary: ${(err as Error).message}`);
       return { status: 500 };
@@ -37,7 +48,7 @@ app.http("summary", {
       return { status: 400, jsonBody: days };
     }
 
-    ctx.log(`summary: ${describeAuth(auth)} days=${days}`);
+    ctx.log(`summary: ${describeAuth(auth)} site=${site} days=${days}`);
 
     const response = await buildSummary(site, days);
     return { status: 200, jsonBody: response };

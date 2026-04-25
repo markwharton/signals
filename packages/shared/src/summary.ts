@@ -53,3 +53,13 @@ export interface SummaryResponse {
    *  where the `country` rollup rows are empty. */
   topCountries?: Array<{ country: string } & SummaryCounters>;
 }
+
+/**
+ * Shape returned by GET /api/sites. The list reflects the current
+ * `SIGNALS_SITES` env var; the dashboard uses it to populate a
+ * site selector and the sig CLI uses it to validate a `--site`
+ * flag against the deploy.
+ */
+export interface SitesResponse {
+  sites: string[];
+}
