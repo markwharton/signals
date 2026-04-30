@@ -1,7 +1,7 @@
 {
   "changelog": {
     "hooks": {
-      "preCommit": "pnpm -r exec npm version ${VERSION#v} --no-git-tag-version && git add 'packages/**/package.json' pnpm-lock.yaml"
+      "preCommit": "pnpm -r exec npm version $VERSION --no-git-tag-version && git add 'packages/**/package.json' pnpm-lock.yaml"
     }
   },
   "guard": {

@@ -3,6 +3,30 @@
 Techniques proven useful against signals' Azure + pnpm + Functions stack.
 Reach for these before flailing.
 
+## Verify the active subscription before assuming a permissions bug
+
+`AuthorizationFailed` errors with messages like *"does not have authorization
+to perform action 'Microsoft.Resources/.../write' over scope
+'/subscriptions/<id>/...'"* are most often a wrong-subscription default,
+not a missing role grant. Operators with multiple Azure accounts can have
+the CLI defaulted to the wrong subscription after working on another
+project — every command then targets a sub where signals' resources
+don't exist (or where the operator has no rights).
+
+Before debugging RBAC, run:
+
+- `az account show --query "{name:name, user:user.name, id:id}" -o json`
+  — confirm both subscription name and identity match what signals'
+  resources live under.
+- `az account list --query "[].{name:name, isDefault:isDefault, user:user.name}" -o table`
+  — see all logged-in identities; the active one might not be the one
+  you used last for signals.
+- Switch back with `az account set --subscription <name-or-guid>`.
+
+The error message names the subscription ID, so cross-check it against
+the RG you expected to deploy to via `az group list --subscription <id>`.
+If the RG isn't in that subscription, the auth context is the bug.
+
 ## Query App Insights for Function diagnostics
 
 Every deployed Function logs to Application Insights. When a request 500s
