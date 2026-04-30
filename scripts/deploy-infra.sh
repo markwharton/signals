@@ -38,7 +38,15 @@ if [[ -z "${GITHUB_CLIENT_SECRET:-}" ]]; then
   exit 1
 fi
 
-az group create -n "$RG" -l australiaeast --query id -o tsv > /dev/null
+# Ensure-exists guard. `az group create` against an existing RG is a
+# no-op result-wise but still requires subscription-level write
+# (`Microsoft.Resources/subscriptions/resourcegroups/write`). When the
+# operator only has rights at the RG scope (the common case), the
+# create call 403s even though nothing needed to be created. Check
+# first and only call create when the RG is genuinely missing.
+if [[ "$(az group exists -n "$RG")" != "true" ]]; then
+  az group create -n "$RG" -l australiaeast --query id -o tsv > /dev/null
+fi
 
 az deployment group create \
   --resource-group "$RG" \
