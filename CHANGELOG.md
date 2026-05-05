@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.8.0] - 2026-05-06
+
+### Added
+
+- path-route reads, site selector, sig --site flag (08a1608)
+
+### Fixed
+
+- skip az group create when RG already exists (c00dba4)
+
+### Maintenance
+
+- update pk-managed files for v0.14.2 (4bbd1e7)
+- use $VERSION directly in preCommit hook (pk pre-expands it) (5e09260)
+- update pk-managed files for v0.18.0 (dc94b59)
+
 ## [v0.7.0] - 2026-04-24
 
 ### Added
@@ -165,3 +181,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.5.0]: https://github.com/markwharton/signals/compare/v0.4.0...v0.5.0
 [v0.6.0]: https://github.com/markwharton/signals/compare/v0.5.0...v0.6.0
 [v0.7.0]: https://github.com/markwharton/signals/compare/v0.6.0...v0.7.0
+[v0.8.0]: https://github.com/markwharton/signals/compare/v0.7.0...v0.8.0
